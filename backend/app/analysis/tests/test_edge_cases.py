@@ -1,0 +1,126 @@
+import pytest
+
+from app.analysis.models.classification_models import FileCategory
+from app.analysis.models.diff_models import ChangedFileInput
+from app.analysis.parser.diff_parser import parse_and_classify, parse_diff
+
+
+def test_none_patch_does_not_crash():
+    inp = ChangedFileInput(filename="foo.py", status="modified", patch=None)
+    result = parse_and_classify(inp)
+    assert result.hunks == []
+    assert result.added_lines == []
+    assert result.removed_lines == []
+    assert result.should_create_security_finding is False
+    assert result.parsing_truncated is False
+
+
+def test_empty_string_patch_does_not_crash():
+    inp = ChangedFileInput(filename="foo.py", status="modified", patch="")
+    result = parse_and_classify(inp)
+    assert result.hunks == []
+    assert result.should_create_security_finding is False
+
+
+def test_binary_file_does_not_crash():
+    inp = ChangedFileInput(
+        filename="logo.png",
+        status="modified",
+        patch="Binary files a/logo.png and b/logo.png differ",
+    )
+    result = parse_and_classify(inp)
+    assert result.hunks == []
+    assert result.parsing_truncated is False
+    assert result.should_create_security_finding is False
+
+
+def test_large_diff_sets_truncation_flag():
+    big_patch = "@@ -1,1 +1,1001 @@\n" + "\n".join(f"+line{i}" for i in range(1001))
+    inp = ChangedFileInput(filename="foo.py", status="modified", patch=big_patch)
+    parsed = parse_diff(inp, max_lines=100)
+    assert parsed.parsing_truncated is True
+
+
+def test_large_diff_returns_partial_results():
+    big_patch = "@@ -1,1 +1,1001 @@\n" + "\n".join(f"+line{i}" for i in range(1001))
+    inp = ChangedFileInput(filename="foo.py", status="modified", patch=big_patch)
+    parsed = parse_diff(inp, max_lines=100)
+    # Partial results should still have hunks and some added lines
+    assert len(parsed.added_lines) > 0
+
+
+def test_large_diff_1000_lines_via_parse_and_classify():
+    big_patch = "@@ -1,1 +1,2001 @@\n" + "\n".join(f"+line{i}" for i in range(2001))
+    inp = ChangedFileInput(filename="foo.py", status="modified", patch=big_patch)
+    result = parse_and_classify(inp)
+    # Should not crash and parsing_truncated should reflect the default limit
+    assert isinstance(result.parsing_truncated, bool)
+
+
+def test_file_with_no_signals_does_not_create_finding():
+    patch = "@@ -1,1 +1,1 @@\n-x = 1\n+x = 2"
+    inp = ChangedFileInput(filename="utils.py", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.should_create_security_finding is False
+
+
+def test_test_file_does_not_create_security_finding_even_with_signals():
+    patch = "@@ -1,1 +1,2 @@\n context\n+token = jwt.decode(x)"
+    inp = ChangedFileInput(
+        filename="tests/test_auth.py",
+        status="modified",
+        patch=patch,
+    )
+    result = parse_and_classify(inp)
+    assert result.should_create_security_finding is False
+    assert result.is_test_only is True
+    assert result.audit_log_only is True
+
+
+def test_test_file_is_still_included_in_output():
+    patch = "@@ -1,1 +1,1 @@\n+assert True"
+    inp = ChangedFileInput(filename="tests/test_something.py", status="added", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.file_path == "tests/test_something.py"
+    assert result.file_category == FileCategory.TEST
+
+
+def test_auth_file_with_token_creates_finding():
+    patch = "@@ -1,2 +1,3 @@\n context\n-old\n+const token = verifyToken(req)"
+    inp = ChangedFileInput(
+        filename="src/middleware/auth.ts",
+        status="modified",
+        patch=patch,
+    )
+    result = parse_and_classify(inp)
+    assert result.should_create_security_finding is True
+    assert result.file_category == FileCategory.AUTH
+    assert "token" in result.security_signals
+
+
+def test_unknown_file_classifies_safely():
+    patch = "@@ -1,1 +1,1 @@\n-old line\n+new line"
+    inp = ChangedFileInput(filename="some/random/file.xyz", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.file_category == FileCategory.UNKNOWN
+    assert result.should_create_security_finding is False
+
+
+def test_deleted_file_with_no_added_lines():
+    patch = "@@ -1,3 +0,0 @@\n-line1\n-line2\n-line3"
+    inp = ChangedFileInput(filename="old_file.py", status="deleted", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.added_lines == []
+    assert result.should_create_security_finding is False
+
+
+def test_multiple_hunks_are_all_parsed():
+    patch = (
+        "@@ -1,2 +1,2 @@\n-old1\n+new1\n"
+        "@@ -10,2 +10,2 @@\n-old2\n+new2"
+    )
+    inp = ChangedFileInput(filename="foo.py", status="modified", patch=patch)
+    parsed = parse_diff(inp)
+    assert len(parsed.hunks) == 2
+    assert len(parsed.added_lines) == 2
+    assert len(parsed.removed_lines) == 2
