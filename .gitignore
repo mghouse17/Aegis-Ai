@@ -1,0 +1,39 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Windows system folders
+AppData/
+Application Data/
+Local Settings/
+My Documents/
+NetHood/
+PrintHood/
+Recent/
+SendTo/
+Start Menu/
+Templates/
+
+# IDEs
+.vscode/
+.idea/
+
+# Node / React
+node_modules/
+build/
+dist/
+
+# Python backend
+__pycache__/
+*.pyc
+.env
+
+# Logs
+*.log
+
+# Your tools
+.claude/
+.codex/
+
+# Supabase (local)
+.supabase/
