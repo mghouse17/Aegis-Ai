@@ -96,3 +96,22 @@ def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
         audit_log_only=is_test_only,
         parsing_truncated=parsed_file.parsing_truncated,
     )
+
+if __name__ == "__main__":
+    import sys
+
+    diff_path = sys.argv[1]
+
+    with open(diff_path, "r", encoding="utf-8") as f:
+        patch = f.read()
+
+    changed_file = ChangedFileInput(
+        filename="test.txt",
+        status="added",
+        language="text",
+        patch=patch,
+    )
+
+    result = parse_and_classify(changed_file)
+
+    print(result)
