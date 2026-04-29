@@ -66,3 +66,7 @@ logs/
 *.key
 *.cert
 secrets.json
+
+#Vscode Extensions
+.vscode/
+.vscode/extensions/
