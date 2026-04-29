@@ -1,0 +1,47 @@
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+new file mode 100644
+index 0000000..a64c75c
+--- /dev/null
++++ b/.github/workflows/test.yml
+@@ -0,0 +1,3 @@
++name: test-workflow 
++on: push 
++jobs: {} 
+diff --git a/README.md b/README.md
+index dd8f270..10d0123 100644
+--- a/README.md
++++ b/README.md
+@@ -208,3 +208,4 @@ See [`skills/dev-workflow.md`](skills/dev-workflow.md) for detailed development
+ See [`skills/agents.md`](skills/agents.md) for each agent's input/output contract.
+ 
+ See [`skills/backboard.md`](skills/backboard.md) for the Backboard integration patterns.
++Updated documentation 
+diff --git a/backend/auth.py b/backend/auth.py
+new file mode 100644
+index 0000000..d169fac
+--- /dev/null
++++ b/backend/auth.py
+@@ -0,0 +1,2 @@
++def login(user): 
++    return True 
+diff --git a/backend/config.py b/backend/config.py
+new file mode 100644
+index 0000000..6318816
+--- /dev/null
++++ b/backend/config.py
+@@ -0,0 +1 @@
++API_KEY = "ghp_123456789SECRET" 
+diff --git a/requirements.txt b/requirements.txt
+new file mode 100644
+index 0000000..582bf0f
+--- /dev/null
++++ b/requirements.txt
+@@ -0,0 +1 @@
++requests==2.31.0 
+diff --git a/test.txt b/test.txt
+new file mode 100644
+index 0000000..ca2bccc
+--- /dev/null
++++ b/test.txt
+@@ -0,0 +1 @@
++"test change" 

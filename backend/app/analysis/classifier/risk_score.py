@@ -17,12 +17,20 @@ _BASE_SCORES: dict[FileCategory, int] = {
 _CHANGE_TYPE_SCORES: dict[ChangeType, int] = {
     ChangeType.SECRET_REFERENCE: 30,
     ChangeType.AUTH_LOGIC_CHANGED: 20,
+    ChangeType.CI_CD_CHANGE: 15,
     ChangeType.CONFIG_CHANGE: 10,
     ChangeType.DEPENDENCY_ADDED: 10,
+    ChangeType.DEPENDENCY_REMOVED: 5,
     ChangeType.NEW_FUNCTION: 5,
 }
 
 _SIGNAL_SCORE = 5
+
+# Public severity thresholds — consumers use these to bucket risk_score.
+RISK_LOW = 20
+RISK_MEDIUM = 40
+RISK_HIGH = 60
+RISK_CRITICAL = 80
 
 
 def compute_risk_score(

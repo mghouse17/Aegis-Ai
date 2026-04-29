@@ -70,6 +70,9 @@ def classify_changes(
     if file_category == FileCategory.CONFIG:
         result.append(ChangeType.CONFIG_CHANGE)
 
+    if file_category == FileCategory.CI_CD:
+        result.append(ChangeType.CI_CD_CHANGE)
+
     if _has_secret_reference(parsed_file.added_lines):
         result.append(ChangeType.SECRET_REFERENCE)
 

@@ -28,13 +28,32 @@ _SIGNALS: list[tuple[str, str | re.Pattern]] = [
         r"SELECT\s+.+\s+FROM|INSERT\s+INTO|DELETE\s+FROM|UPDATE\s+.+\s+SET",
         re.IGNORECASE,
     )),
-    ("rejectUnauthorized",      "rejectUnauthorized: false"),
+    # Space-tolerant: matches `rejectUnauthorized: false` and `rejectUnauthorized:false`
+    ("rejectUnauthorized",      re.compile(r"rejectUnauthorized\s*:\s*false", re.IGNORECASE)),
     ("verify_false",            re.compile(
-        r"verify\s*=\s*False|ssl_verify\s*=\s*False|VERIFY_SSL",
+        r"verify\s*=\s*False|ssl_verify\s*=\s*False",
         re.IGNORECASE,
     )),
     ("subprocess",              "subprocess"),
-    ("shell_true",              "shell=True"),
+    # Space-tolerant: matches `shell=True` and `shell = True`
+    ("shell_true",              re.compile(r"shell\s*=\s*True")),
+    # Weak hashing algorithms
+    ("weak_hash",               re.compile(
+        r"\bhashlib\.(md5|sha1)\b|\b(md5|sha1)\(",
+        re.IGNORECASE,
+    )),
+    # Broad CORS — origin: '*' or allow_origins = ["*"]
+    ("cors_wildcard",           re.compile(
+        r"origin\s*[:=]\s*[\"']?\*[\"']?"
+        r"|allow_origins\s*=\s*\[[\"']?\*[\"']?\]",
+        re.IGNORECASE,
+    )),
+    # Hardcoded secrets: AWS access key, GitHub PAT, PEM private key header
+    ("hardcoded_secret",        re.compile(
+        r"AKIA[A-Z0-9]{16}"
+        r"|ghp_[A-Za-z0-9]{36}"
+        r"|-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY",
+    )),
 ]
 
 

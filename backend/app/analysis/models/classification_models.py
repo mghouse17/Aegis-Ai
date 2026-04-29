@@ -25,6 +25,7 @@ class ChangeType(str, Enum):
     DEPENDENCY_ADDED = "dependency_added"
     DEPENDENCY_REMOVED = "dependency_removed"
     CONFIG_CHANGE = "config_change"
+    CI_CD_CHANGE = "ci_cd_change"
     SECRET_REFERENCE = "secret_reference"
     TEST_ONLY_CHANGE = "test_only_change"
     UNKNOWN = "unknown"
