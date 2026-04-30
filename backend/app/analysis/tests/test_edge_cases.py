@@ -1,6 +1,6 @@
 import pytest
 
-from app.analysis.models.classification_models import FileCategory
+from app.analysis.models.classification_models import ChangeType, FileCategory
 from app.analysis.models.diff_models import ChangedFileInput
 from app.analysis.parser.diff_parser import parse_and_classify, parse_diff
 
@@ -64,7 +64,7 @@ def test_file_with_no_signals_does_not_create_finding():
     assert result.should_create_security_finding is False
 
 
-def test_test_file_does_not_create_security_finding_even_with_signals():
+def test_test_file_with_security_signals_creates_finding():
     patch = "@@ -1,1 +1,2 @@\n context\n+token = jwt.decode(x)"
     inp = ChangedFileInput(
         filename="tests/test_auth.py",
@@ -72,9 +72,9 @@ def test_test_file_does_not_create_security_finding_even_with_signals():
         patch=patch,
     )
     result = parse_and_classify(inp)
-    assert result.should_create_security_finding is False
+    assert result.should_create_security_finding is True
     assert result.is_test_only is True
-    assert result.audit_log_only is True
+    assert result.audit_log_only is False
 
 
 def test_test_file_is_still_included_in_output():
@@ -103,6 +103,42 @@ def test_unknown_file_classifies_safely():
     inp = ChangedFileInput(filename="some/random/file.xyz", status="modified", patch=patch)
     result = parse_and_classify(inp)
     assert result.file_category == FileCategory.UNKNOWN
+    assert result.should_create_security_finding is False
+    assert result.risk_score <= 5
+
+
+def test_readme_change_is_docs_change_and_audit_only():
+    patch = "@@ -1,1 +1,1 @@\n-old\n+new documentation"
+    inp = ChangedFileInput(filename="README.md", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.file_category == FileCategory.DOCS
+    assert ChangeType.DOCS_CHANGE in result.change_types
+    assert result.should_create_security_finding is False
+    assert result.audit_log_only is True
+    assert result.risk_score <= 5
+
+
+def test_auth_return_true_detects_auth_bypass():
+    patch = "@@ -1,2 +1,2 @@\n def login(user):\n+    return True"
+    inp = ChangedFileInput(filename="backend/auth.py", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert "auth_bypass" in result.security_signals
+
+
+def test_test_only_file_is_audit_only_without_finding():
+    patch = "@@ -1,1 +1,1 @@\n+API_KEY = \"ghp_123456789SECRET\""
+    inp = ChangedFileInput(filename="tests/test_auth.py", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.audit_log_only is False
+    assert result.should_create_security_finding is True
+    assert result.security_signals
+
+
+def test_safe_test_only_file_remains_audit_only():
+    patch = "@@ -1,1 +1,1 @@\n+assert result == expected"
+    inp = ChangedFileInput(filename="tests/test_utils.py", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.audit_log_only is True
     assert result.should_create_security_finding is False
 
 

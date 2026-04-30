@@ -100,8 +100,12 @@ def test_frontend_vue():
     assert classify_file("src/views/Home.vue") == FileCategory.FRONTEND
 
 
-def test_unknown_readme():
-    assert classify_file("README.md") == FileCategory.UNKNOWN
+def test_docs_readme():
+    assert classify_file("README.md") == FileCategory.DOCS
+
+
+def test_backend_config_py():
+    assert classify_file("backend/config.py") == FileCategory.CONFIG
 
 
 def test_unknown_makefile():
@@ -115,3 +119,53 @@ def test_test_beats_auth_priority():
 
 def test_case_insensitive_auth():
     assert classify_file("src/AUTH/middleware.py") == FileCategory.AUTH
+
+
+# ---------------------------------------------------------------------------
+# Middleware false-positive prevention (issue 7)
+# ---------------------------------------------------------------------------
+
+
+def test_cors_middleware_is_not_auth():
+    # "middleware" alone is no longer an auth keyword; only the content of the
+    # path segment matters. cors.ts has no auth-related term → UNKNOWN.
+    assert classify_file("src/middleware/cors.ts") == FileCategory.UNKNOWN
+
+
+def test_rate_limit_middleware_is_not_auth():
+    assert classify_file("src/middleware/rate_limiter.py") == FileCategory.UNKNOWN
+
+
+def test_auth_middleware_is_still_auth():
+    # "auth" in the filename keeps AUTH classification.
+    assert classify_file("src/middleware/auth.ts") == FileCategory.AUTH
+
+
+def test_session_middleware_is_still_auth():
+    # "session" is still an auth keyword.
+    assert classify_file("src/middleware/session.ts") == FileCategory.AUTH
+
+
+# ---------------------------------------------------------------------------
+# Config classification (issue 8)
+# ---------------------------------------------------------------------------
+
+
+def test_config_env_example():
+    assert classify_file(".env.example") == FileCategory.CONFIG
+
+
+def test_config_settings_py():
+    assert classify_file("app/settings.py") == FileCategory.CONFIG
+
+
+def test_config_dot_env_local():
+    assert classify_file(".env.local") == FileCategory.CONFIG
+
+
+def test_dockerfile_is_ci_cd():
+    assert classify_file("Dockerfile") == FileCategory.CI_CD
+
+
+def test_docker_compose_is_ci_cd():
+    assert classify_file("docker-compose.yml") == FileCategory.CI_CD

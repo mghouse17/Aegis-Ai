@@ -11,6 +11,7 @@ class FileCategory(str, Enum):
     DEPENDENCY = "dependency"
     CONFIG = "config"
     TEST = "test"
+    DOCS = "docs"
     API = "api"
     DATABASE = "database"
     CI_CD = "ci_cd"
@@ -26,6 +27,7 @@ class ChangeType(str, Enum):
     DEPENDENCY_REMOVED = "dependency_removed"
     CONFIG_CHANGE = "config_change"
     CI_CD_CHANGE = "ci_cd_change"
+    DOCS_CHANGE = "docs_change"
     SECRET_REFERENCE = "secret_reference"
     TEST_ONLY_CHANGE = "test_only_change"
     UNKNOWN = "unknown"
@@ -40,7 +42,9 @@ class FileClassification:
     added_lines: list[tuple[int, str]] = field(default_factory=list)
     removed_lines: list[tuple[int, str]] = field(default_factory=list)
     change_types: list[ChangeType] = field(default_factory=list)
+    change_confidence: dict[str, str] = field(default_factory=dict)
     security_signals: list[str] = field(default_factory=list)
+    dependency_changes: list[dict] = field(default_factory=list)
     risk_score: int = 0
     should_create_security_finding: bool = False
     audit_log_only: bool = False
@@ -67,7 +71,9 @@ class FileClassification:
             "added_lines": self.added_lines,
             "removed_lines": self.removed_lines,
             "change_types": [ct.value for ct in self.change_types],
+            "change_confidence": self.change_confidence,
             "security_signals": self.security_signals,
+            "dependency_changes": self.dependency_changes,
             "risk_score": self.risk_score,
             "should_create_security_finding": self.should_create_security_finding,
             "audit_log_only": self.audit_log_only,

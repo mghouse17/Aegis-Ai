@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
-from app.analysis.classifier.change_classifier import classify_changes
+from app.analysis.classifier.change_classifier import classify_change_confidence, classify_changes
 from app.analysis.classifier.risk_score import compute_risk_score
 from app.analysis.classifier.security_signal_classifier import classify_security_signals
-from app.analysis.models.classification_models import ChangeType, FileClassification
+from app.analysis.models.classification_models import ChangeType, FileCategory, FileClassification
 from app.analysis.models.diff_models import ChangedFileInput, ParsedFile
 from app.analysis.parser.file_classifier import classify_file
 from app.analysis.parser.hunk_parser import parse_hunk
@@ -17,6 +17,21 @@ _DEFAULT_MAX_LINES = 5000
 # explicit named signal — covers high-scoring combinations that lack a single
 # dominant keyword (e.g. config file + multiple minor signals).
 _FINDING_RISK_THRESHOLD = 50
+
+_CI_CD_DANGEROUS_SIGNALS = {
+    "hardcoded_secret",
+    "github_token",
+    "api_key",
+    "curl_pipe_shell",
+    "wget_pipe_shell",
+    "chmod_777",
+    "privileged_true",
+    "permissions_write_all",
+    "pull_request_target",
+    "unpinned_action",
+}
+
+_FAKE_FILE_BASENAMES = {"diff.txt", "cd", "git", "python"}
 
 # ---------------------------------------------------------------------------
 # Language detection
@@ -48,23 +63,24 @@ def _detect_language(filename: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# PR-level diff splitting — compiled once at import
+# PR-level diff header detection — compiled once at import
 # ---------------------------------------------------------------------------
 
-# Split the raw diff into one segment per file.  Each segment starts with a
-# `diff --git` line; the lookahead keeps that line inside the segment.
-_DIFF_FILE_SPLIT_RE = re.compile(r"(?=^diff --git )", re.MULTILINE)
+# Matches a `diff --git a/<path> b/<path>` line EXACTLY (no re.MULTILINE).
+# Used with re.match() against individual lines so that patch content which
+# happens to contain "diff --git" text is never mistaken for a file header.
+_FILE_HEADER_LINE_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 
-# Extracts `a/<path>` and `b/<path>` from the opening `diff --git` header.
-# Greedy backtracking on group(1) means group(2) always captures the shortest
-# trailing match — correct for both same-name and rename cases.
-_FILE_HEADER_RE = re.compile(r"^diff --git a/(.+) b/(.+)$", re.MULTILINE)
-
+# Block-level metadata patterns (searched inside a collected block string).
 _NEW_FILE_RE = re.compile(r"^new file mode", re.MULTILINE)
 _DELETED_FILE_RE = re.compile(r"^deleted file mode", re.MULTILINE)
 _RENAME_TO_RE = re.compile(r"^rename to (.+)$", re.MULTILINE)
 _BINARY_RE = re.compile(r"^Binary files", re.MULTILINE)
 _PATCH_START_RE = re.compile(r"^@@", re.MULTILINE)
+_VALID_BLOCK_MARKER_RE = re.compile(
+    r"^(?:index |new file mode|deleted file mode|old mode|new mode|similarity index|rename from |rename to |Binary files|--- |\+\+\+ |@@)",
+    re.MULTILINE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -75,46 +91,72 @@ _PATCH_START_RE = re.compile(r"^@@", re.MULTILINE)
 def parse_pr_diff(raw_diff: str) -> list[FileClassification]:
     """Parse a full unified GitHub PR diff into per-file classifications.
 
-    Splits on ``diff --git`` boundaries, extracts filename / status / patch
-    for each changed file, then delegates to :func:`parse_and_classify`.
+    Uses a two-pass line-by-line scan instead of ``re.split`` so that:
+
+    * All text before the first ``diff --git`` header is silently ignored.
+    * Lines INSIDE a patch (added/removed/context) that happen to contain
+      ``diff --git`` text are never mistaken for file boundaries — because
+      those lines are prefixed with ``+``, ``-``, or `` `` and therefore
+      cannot match the header pattern.
+    * ``re.split`` zero-width-lookahead edge cases on Windows line endings
+      (``\\r\\n``) or BOMs are completely avoided.
 
     Known limitation: filenames containing the literal substring `` b/`` will
     not parse correctly — this covers ≥99 % of real-world filenames.
     """
+    lines = raw_diff.splitlines()
+
+    # Pass 1 — locate every valid ``diff --git a/… b/…`` header.
+    # Strip trailing \r so Windows-style line endings never cause a miss.
+    header_positions: list[tuple[int, re.Match]] = []
+    for i, line in enumerate(lines):
+        m = _FILE_HEADER_LINE_RE.match(line.rstrip("\r"))
+        if m:
+            header_positions.append((i, m))
+
+    if not header_positions:
+        return []
+
     results: list[FileClassification] = []
 
-    for segment in _DIFF_FILE_SPLIT_RE.split(raw_diff):
-        segment = segment.strip()
-        if not segment:
+    # Pass 2 — each block runs from its header line up to (not including)
+    # the next header line.  Joining with "\n" reconstructs a clean block
+    # regardless of the original line-ending style.
+    for block_idx, (hdr_line_no, hdr_match) in enumerate(header_positions):
+        next_hdr_line_no = (
+            header_positions[block_idx + 1][0]
+            if block_idx + 1 < len(header_positions)
+            else len(lines)
+        )
+        block = "\n".join(lines[hdr_line_no:next_hdr_line_no])
+        if not _is_valid_diff_block(block):
             continue
 
-        m = _FILE_HEADER_RE.search(segment)
-        if not m:
+        # Use the b/ side as the canonical post-merge filename.
+        # Strip surrounding quotes added by Git for paths with special chars.
+        filename = hdr_match.group(2).strip().strip('"')
+        if not filename:
+            continue
+        if PurePosixPath(filename).name.lower() in _FAKE_FILE_BASENAMES:
             continue
 
-        # Use the b/ side as the canonical (post-merge) filename.
-        # Strip surrounding quotes that Git adds for paths with special chars.
-        filename = m.group(2).strip().strip('"')
-
-        if _NEW_FILE_RE.search(segment):
+        if _NEW_FILE_RE.search(block):
             status = "added"
-        elif _DELETED_FILE_RE.search(segment):
+        elif _DELETED_FILE_RE.search(block):
             status = "deleted"
         else:
-            rename_m = _RENAME_TO_RE.search(segment)
+            rename_m = _RENAME_TO_RE.search(block)
             if rename_m:
                 filename = rename_m.group(1).strip()
                 status = "renamed"
             else:
                 status = "modified"
 
-        # Binary files have no @@ hunks; pass the sentinel so parse_diff can
-        # detect and skip them cleanly.
-        if _BINARY_RE.search(segment):
+        if _BINARY_RE.search(block):
             patch: str | None = "Binary files"
         else:
-            patch_m = _PATCH_START_RE.search(segment)
-            patch = segment[patch_m.start():] if patch_m else None
+            patch_m = _PATCH_START_RE.search(block)
+            patch = block[patch_m.start():] if patch_m else None
 
         results.append(parse_and_classify(ChangedFileInput(
             filename=filename,
@@ -124,6 +166,15 @@ def parse_pr_diff(raw_diff: str) -> list[FileClassification]:
         )))
 
     return results
+
+
+def _is_valid_diff_block(block: str) -> bool:
+    block_lines = block.splitlines()
+    if not block_lines:
+        return False
+    if not _FILE_HEADER_LINE_RE.match(block_lines[0].rstrip("\r")):
+        return False
+    return bool(_VALID_BLOCK_MARKER_RE.search(block))
 
 
 def parse_diff(
@@ -179,34 +230,89 @@ def parse_diff(
     return result
 
 
+def _extract_dependency_changes(parsed_file: ParsedFile) -> list[dict]:
+    filename = PurePosixPath(parsed_file.file_path).name.lower()
+    if filename == "requirements.txt":
+        return _extract_requirements_changes(parsed_file.added_lines)
+    if filename == "package.json":
+        return _extract_package_json_changes(parsed_file.added_lines)
+    return []
+
+
+def _extract_requirements_changes(added_lines: list[tuple[int, str]]) -> list[dict]:
+    seen: dict[tuple[str, str], dict] = {}
+    requirement_re = re.compile(r"^\s*([A-Za-z0-9_.-]+)==([^\s#]+)")
+    for line_num, content in added_lines:
+        match = requirement_re.match(content)
+        if not match:
+            continue
+        pkg = match.group(1)
+        ver = match.group(2).rstrip(",")
+        key = (pkg.lower(), ver)
+        if key not in seen:
+            seen[key] = {"package": pkg, "version": ver, "manager": "pip", "line": line_num}
+    return list(seen.values())
+
+
+def _extract_package_json_changes(added_lines: list[tuple[int, str]]) -> list[dict]:
+    seen: dict[tuple[str, str], dict] = {}
+    package_re = re.compile(r'^\s*"([^"]+)"\s*:\s*"([^"]+)"\s*,?\s*$')
+    ignored_keys = {
+        "name", "version", "description", "main", "scripts",
+        "dependencies", "devDependencies", "peerDependencies", "optionalDependencies",
+    }
+    for line_num, content in added_lines:
+        match = package_re.match(content)
+        if not match:
+            continue
+        package, version = match.groups()
+        if package in ignored_keys:
+            continue
+        key = (package.lower(), version)
+        if key not in seen:
+            seen[key] = {"package": package, "version": version, "manager": "npm", "line": line_num}
+    return list(seen.values())
+
+
+def _is_ci_cd_dangerous(security_signals: list[str]) -> bool:
+    return bool(set(security_signals) & _CI_CD_DANGEROUS_SIGNALS)
+
+
 def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
     parsed_file = parse_diff(changed_file)
     file_category = classify_file(changed_file.filename)
     change_types = classify_changes(parsed_file, file_category)
+    change_confidence = classify_change_confidence(parsed_file, file_category, change_types)
     security_signals = classify_security_signals(parsed_file)
+    dependency_changes = _extract_dependency_changes(parsed_file)
     risk = compute_risk_score(file_category, change_types, security_signals)
 
     is_test_only = (
         ChangeType.TEST_ONLY_CHANGE in change_types
-        or file_category.value == "test"
+        or file_category == FileCategory.TEST
     )
+    is_docs = file_category == FileCategory.DOCS
+    is_ci_cd = file_category == FileCategory.CI_CD
+    ci_cd_dangerous = is_ci_cd and _is_ci_cd_dangerous(security_signals)
+
+    has_security_signal = len(security_signals) > 0
 
     # A finding is created when ANY of the following is true (all deterministic,
-    # no LLM involvement):
-    #   1. risk_score reaches the threshold (high-scoring combination)
-    #   2. A specific security signal was detected in added lines
-    #   3. Auth logic was explicitly changed
-    #   4. A secret reference was introduced
-    #   5. A new dependency was added (supply-chain risk)
-    #   6. A CI/CD pipeline file was modified (pipeline-injection risk)
-    should_create = not is_test_only and (
-        risk >= _FINDING_RISK_THRESHOLD
-        or len(security_signals) > 0
-        or ChangeType.AUTH_LOGIC_CHANGED in change_types
-        or ChangeType.SECRET_REFERENCE in change_types
-        or ChangeType.DEPENDENCY_ADDED in change_types
-        or ChangeType.CI_CD_CHANGE in change_types
+    # no LLM involvement). Real security signals override test/docs audit-only
+    # defaults so secrets committed in tests are still surfaced.
+    should_create = has_security_signal or (
+        not (is_test_only or is_docs) and (
+            risk >= _FINDING_RISK_THRESHOLD
+            or ChangeType.AUTH_LOGIC_CHANGED in change_types
+            or ChangeType.SECRET_REFERENCE in change_types
+            or ChangeType.DEPENDENCY_ADDED in change_types
+            or ci_cd_dangerous
+        )
     )
+    if is_ci_cd:
+        should_create = has_security_signal or ci_cd_dangerous
+
+    audit_log_only = not should_create and (is_test_only or is_docs or is_ci_cd)
 
     return FileClassification(
         file_path=changed_file.filename,
@@ -216,10 +322,12 @@ def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
         added_lines=parsed_file.added_lines,
         removed_lines=parsed_file.removed_lines,
         change_types=change_types,
+        change_confidence=change_confidence,
         security_signals=security_signals,
+        dependency_changes=dependency_changes,
         risk_score=risk,
         should_create_security_finding=should_create,
-        audit_log_only=is_test_only,
+        audit_log_only=audit_log_only,
         parsing_truncated=parsed_file.parsing_truncated,
     )
 

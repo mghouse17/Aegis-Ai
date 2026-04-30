@@ -6,6 +6,7 @@ _BASE_SCORES: dict[FileCategory, int] = {
     FileCategory.AUTH: 40,
     FileCategory.DATABASE: 35,
     FileCategory.CONFIG: 30,
+    FileCategory.DOCS: 0,
     FileCategory.API: 25,
     FileCategory.DEPENDENCY: 20,
     FileCategory.CI_CD: 20,

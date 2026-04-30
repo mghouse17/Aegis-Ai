@@ -43,6 +43,19 @@ _SECRET_KEYWORDS = (
     "privatekey",
 )
 
+_AUTH_HIGH_CONFIDENCE_KEYWORDS = (
+    "jwt",
+    "token",
+    "session",
+    "permission",
+    "role",
+    "admin",
+    "verify",
+    "middleware",
+)
+
+_AUTH_MEDIUM_PATH_KEYWORDS = ("auth", "login", "session", "middleware")
+
 
 def classify_changes(
     parsed_file: ParsedFile,
@@ -73,6 +86,9 @@ def classify_changes(
     if file_category == FileCategory.CI_CD:
         result.append(ChangeType.CI_CD_CHANGE)
 
+    if file_category == FileCategory.DOCS:
+        result.append(ChangeType.DOCS_CHANGE)
+
     if _has_secret_reference(parsed_file.added_lines):
         result.append(ChangeType.SECRET_REFERENCE)
 
@@ -84,6 +100,30 @@ def classify_changes(
         result.append(ChangeType.UNKNOWN)
 
     return result
+
+
+def classify_change_confidence(
+    parsed_file: ParsedFile,
+    file_category: FileCategory,
+    change_types: list[ChangeType],
+) -> dict[str, str]:
+    confidence: dict[str, str] = {}
+    if ChangeType.AUTH_LOGIC_CHANGED not in change_types:
+        return confidence
+
+    all_lines = parsed_file.added_lines + parsed_file.removed_lines
+    if any(
+        keyword in content.lower()
+        for _ln, content in all_lines
+        for keyword in _AUTH_HIGH_CONFIDENCE_KEYWORDS
+    ):
+        confidence[ChangeType.AUTH_LOGIC_CHANGED.value] = "high"
+    elif any(keyword in parsed_file.file_path.lower() for keyword in _AUTH_MEDIUM_PATH_KEYWORDS):
+        confidence[ChangeType.AUTH_LOGIC_CHANGED.value] = "medium"
+    elif file_category == FileCategory.AUTH:
+        confidence[ChangeType.AUTH_LOGIC_CHANGED.value] = "low"
+
+    return confidence
 
 
 def _any_line_is_function(lines: list[tuple[int, str]]) -> bool:
@@ -100,13 +140,25 @@ def _any_line_is_function(lines: list[tuple[int, str]]) -> bool:
 
 
 def _has_auth_signal(parsed_file: ParsedFile, file_category: FileCategory) -> bool:
-    if file_category == FileCategory.AUTH:
-        return True
     all_lines = parsed_file.added_lines + parsed_file.removed_lines
+    if not all_lines:
+        return False
+
+    # Always check content keywords regardless of category.
     for _ln, content in all_lines:
-        lower = content.lower()
-        if any(kw in lower for kw in _AUTH_KEYWORDS):
+        if any(kw in content.lower() for kw in _AUTH_KEYWORDS):
             return True
+
+    # For auth-category files: flag if there are meaningful (non-whitespace,
+    # non-comment) code changes. Whitespace-only and comment-only diffs in auth
+    # files are low-noise and should not trigger AUTH_LOGIC_CHANGED.
+    if file_category == FileCategory.AUTH:
+        _COMMENT_PREFIXES = ("#", "//", "/*", "*", "<!--")
+        for _ln, content in all_lines:
+            stripped = content.strip()
+            if stripped and not any(stripped.startswith(p) for p in _COMMENT_PREFIXES):
+                return True
+
     return False
 
 
