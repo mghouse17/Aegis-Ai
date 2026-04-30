@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from app.analysis.models.classification_models import ChangeType, FileCategory
 from app.analysis.models.diff_models import ParsedFile
+from app.analysis.classifier.taxonomy import (
+    AUTH_HIGH_CONFIDENCE_KEYWORDS,
+    AUTH_KEYWORDS,
+    AUTH_MEDIUM_PATH_KEYWORDS,
+    SECRET_REFERENCE_KEYWORDS,
+)
 
 _FUNCTION_PREFIXES = (
     "def ",
@@ -13,49 +19,6 @@ _FUNCTION_PREFIXES = (
 )
 
 _FUNCTION_ARROW_KEYWORDS = ("= (", "=> {", "= async (", "=> (")
-
-_AUTH_KEYWORDS = (
-    "auth",
-    "jwt",
-    "token",
-    "session",
-    "password",
-    "permission",
-    "role",
-    "admin",
-    "oauth",
-    "login",
-    "logout",
-    "bearer",
-    "credential",
-    "authorize",
-    "authenticate",
-)
-
-_SECRET_KEYWORDS = (
-    "secret",
-    "api_key",
-    "apikey",
-    "apiKey",
-    "password",
-    "token",
-    "private_key",
-    "privatekey",
-)
-
-_AUTH_HIGH_CONFIDENCE_KEYWORDS = (
-    "jwt",
-    "token",
-    "session",
-    "permission",
-    "role",
-    "admin",
-    "verify",
-    "middleware",
-)
-
-_AUTH_MEDIUM_PATH_KEYWORDS = ("auth", "login", "session", "middleware")
-
 
 def classify_changes(
     parsed_file: ParsedFile,
@@ -115,10 +78,10 @@ def classify_change_confidence(
     if any(
         keyword in content.lower()
         for _ln, content in all_lines
-        for keyword in _AUTH_HIGH_CONFIDENCE_KEYWORDS
+        for keyword in AUTH_HIGH_CONFIDENCE_KEYWORDS
     ):
         confidence[ChangeType.AUTH_LOGIC_CHANGED.value] = "high"
-    elif any(keyword in parsed_file.file_path.lower() for keyword in _AUTH_MEDIUM_PATH_KEYWORDS):
+    elif any(keyword in parsed_file.file_path.lower() for keyword in AUTH_MEDIUM_PATH_KEYWORDS):
         confidence[ChangeType.AUTH_LOGIC_CHANGED.value] = "medium"
     elif file_category == FileCategory.AUTH:
         confidence[ChangeType.AUTH_LOGIC_CHANGED.value] = "low"
@@ -148,7 +111,7 @@ def _has_auth_signal(parsed_file: ParsedFile, file_category: FileCategory) -> bo
         return False
 
     for _ln, content in all_lines:
-        if any(kw in content.lower() for kw in _AUTH_KEYWORDS):
+        if any(kw in content.lower() for kw in AUTH_KEYWORDS):
             return True
 
     # For auth files: flag meaningful non-whitespace, non-comment code changes.
@@ -164,7 +127,7 @@ def _has_auth_signal(parsed_file: ParsedFile, file_category: FileCategory) -> bo
 def _has_secret_reference(added_lines: list[tuple[int, str]]) -> bool:
     for _ln, content in added_lines:
         lower = content.lower()
-        if any(kw in lower for kw in _SECRET_KEYWORDS):
+        if any(kw in lower for kw in SECRET_REFERENCE_KEYWORDS):
             # Require an assignment or function call context to reduce noise
             if "=" in content or "(" in content:
                 return True

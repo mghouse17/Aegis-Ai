@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from app.analysis.models.classification_models import ChangeType, FileCategory
+from app.analysis.classifier.taxonomy import CI_CD_DANGEROUS_SIGNALS
+from app.analysis.models.classification_models import ChangeType, FileCategory, FileClassification
 
 _BASE_SCORES: dict[FileCategory, int] = {
     FileCategory.AUTH: 40,
@@ -38,25 +39,6 @@ RISK_CRITICAL = 80
 # independently of the parse pipeline.
 FINDING_RISK_THRESHOLD = 50
 
-# Signals that indicate a secret value was introduced in the diff.
-_SECRET_SIGNALS: frozenset[str] = frozenset({
-    "secret", "api_key", "hardcoded_secret", "access_token", "refresh_token",
-})
-
-# CI/CD signals that represent pipeline-injection or credential-exposure risk.
-_CI_CD_DANGEROUS_SIGNALS: frozenset[str] = frozenset({
-    "hardcoded_secret",
-    "github_token",
-    "api_key",
-    "curl_pipe_shell",
-    "wget_pipe_shell",
-    "chmod_777",
-    "privileged_true",
-    "permissions_write_all",
-    "pull_request_target",
-    "unpinned_action",
-})
-
 
 def compute_risk_score(
     file_category: FileCategory,
@@ -68,6 +50,10 @@ def compute_risk_score(
         score += _CHANGE_TYPE_SCORES.get(ct, 0)
     score += len(set(security_signals)) * _SIGNAL_SCORE
     return min(score, 100)
+
+
+def is_ci_cd_dangerous(security_signals: list[str]) -> bool:
+    return bool(set(security_signals) & CI_CD_DANGEROUS_SIGNALS)
 
 
 def should_create_finding(
@@ -93,7 +79,8 @@ def should_create_finding(
         return False, True
 
     if is_ci_cd:
-        return ci_cd_dangerous, not ci_cd_dangerous
+        dangerous = ci_cd_dangerous or is_ci_cd_dangerous(security_signals)
+        return dangerous, not dangerous
 
     create = (
         risk_score >= FINDING_RISK_THRESHOLD
@@ -103,3 +90,27 @@ def should_create_finding(
         or ChangeType.DEPENDENCY_ADDED in change_types
     )
     return create, False
+
+
+def apply_final_overrides(result: FileClassification) -> FileClassification:
+    """Apply product-level finding policy after all classifiers have run."""
+    if result.is_test_only:
+        result.should_create_security_finding = False
+        result.audit_log_only = True
+        result.risk_score = 0
+        if result.file_category != FileCategory.AUTH:
+            result.change_types = [
+                change_type for change_type in result.change_types
+                if change_type != ChangeType.AUTH_LOGIC_CHANGED
+            ]
+            result.change_confidence.pop(ChangeType.AUTH_LOGIC_CHANGED.value, None)
+        return result
+
+    if result.file_category == FileCategory.DOCS:
+        result.should_create_security_finding = False
+        result.audit_log_only = True
+
+    if result.audit_log_only:
+        result.risk_score = min(result.risk_score, 5)
+
+    return result

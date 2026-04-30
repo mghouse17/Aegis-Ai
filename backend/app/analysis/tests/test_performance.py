@@ -35,6 +35,22 @@ def test_large_multi_file_diff_completes_within_budget():
     elapsed = time.perf_counter() - t0
 
     assert len(results) == 10, "Expected one result per file"
+    assert all(len(result.hunks) == 1 for result in results)
+    assert all(len(result.added_lines) == 500 for result in results)
+    assert all(not result.parsing_truncated for result in results)
+    assert {result.file_path for result in results} == {
+        f"src/module_{i}/service.py" for i in range(10)
+    }
     assert elapsed < 2.0, (
         f"parse_pr_diff took {elapsed:.2f}s — performance regression detected"
     )
+
+
+def test_large_diff_truncation_behavior_is_predictable():
+    raw = _make_multi_file_diff(n_files=1, lines_per_file=5100)
+    results = parse_pr_diff(raw)
+
+    assert len(results) == 1
+    assert results[0].parsing_truncated is True
+    assert len(results[0].added_lines) > 0
+    assert len(results[0].added_lines) < 5100

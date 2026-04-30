@@ -79,3 +79,31 @@ def test_pure_removal_block():
     assert len(hunk.removed_lines) == 3
     assert hunk.removed_lines[0] == (5, "line1")
     assert hunk.added_lines == []
+
+
+def test_malformed_hunk_header_returns_empty_counts_without_crashing():
+    hunk = parse_hunk("@@ malformed @@\n+new")
+
+    assert hunk.header == "@@ malformed @@"
+    assert hunk.old_count == 0
+    assert hunk.new_count == 0
+    assert hunk.added_lines == []
+    assert hunk.removed_lines == []
+
+
+def test_lines_after_satisfied_hunk_counts_are_ignored():
+    patch = "@@ -1,1 +1,1 @@\n-old\n+new\nterminal junk\n"
+    hunk = parse_hunk(patch)
+
+    all_contents = [
+        content
+        for _, content in hunk.added_lines + hunk.removed_lines + hunk.context_lines
+    ]
+    assert "terminal junk" not in all_contents
+
+
+def test_unexpected_prefix_before_counts_are_satisfied_is_context():
+    hunk = parse_hunk("@@ -1,2 +1,2 @@\n?unexpected\n+new")
+
+    assert (1, "?unexpected") in hunk.context_lines
+    assert hunk.added_lines == [(2, "new")]

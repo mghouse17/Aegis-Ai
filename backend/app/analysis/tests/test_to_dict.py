@@ -26,7 +26,8 @@ def _result():
 REQUIRED_KEYS = {
     "file_path", "file_category", "is_test_only",
     "hunks", "added_lines", "removed_lines",
-    "change_types", "security_signals", "risk_score",
+    "change_types", "change_confidence", "security_signals",
+    "dependency_changes", "risk_score",
     "should_create_security_finding", "audit_log_only", "parsing_truncated",
 }
 
@@ -56,6 +57,29 @@ def test_change_types_are_strings():
 def test_security_signals_are_strings():
     d = _result().to_dict()
     assert all(isinstance(s, str) for s in d["security_signals"])
+
+
+def test_change_confidence_is_string_map():
+    d = _result().to_dict()
+    assert isinstance(d["change_confidence"], dict)
+    assert all(isinstance(k, str) for k in d["change_confidence"].keys())
+    assert all(isinstance(v, str) for v in d["change_confidence"].values())
+
+
+def test_dependency_changes_are_dicts():
+    result = parse_and_classify(ChangedFileInput(
+        filename="requirements.txt",
+        status="modified",
+        patch="@@ -1,1 +1,2 @@\n flask\n+requests==2.31.0",
+    ))
+    d = result.to_dict()
+    assert isinstance(d["dependency_changes"], list)
+    assert d["dependency_changes"] == [{
+        "package": "requests",
+        "version": "2.31.0",
+        "manager": "pip",
+        "line": 2,
+    }]
 
 
 # ---------------------------------------------------------------------------

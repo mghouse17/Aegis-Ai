@@ -4,7 +4,14 @@ import re
 from pathlib import PurePosixPath
 
 from app.analysis.classifier.change_classifier import classify_change_confidence, classify_changes
-from app.analysis.classifier.risk_score import compute_risk_score
+from app.analysis.classifier.dependency_classifier import extract_dependency_changes
+from app.analysis.classifier.risk_score import (
+    FINDING_RISK_THRESHOLD as _FINDING_RISK_THRESHOLD,
+    apply_final_overrides,
+    compute_risk_score,
+    is_ci_cd_dangerous,
+    should_create_finding,
+)
 from app.analysis.classifier.security_signal_classifier import classify_security_signals
 from app.analysis.models.classification_models import ChangeType, FileCategory, FileClassification
 from app.analysis.models.diff_models import ChangedFileInput, ParsedFile
@@ -12,24 +19,6 @@ from app.analysis.parser.file_classifier import classify_file
 from app.analysis.parser.hunk_parser import parse_hunk
 
 _DEFAULT_MAX_LINES = 5000
-
-# Findings are created when risk_score reaches this value, even without an
-# explicit named signal — covers high-scoring combinations that lack a single
-# dominant keyword (e.g. config file + multiple minor signals).
-_FINDING_RISK_THRESHOLD = 50
-
-_CI_CD_DANGEROUS_SIGNALS = {
-    "hardcoded_secret",
-    "github_token",
-    "api_key",
-    "curl_pipe_shell",
-    "wget_pipe_shell",
-    "chmod_777",
-    "privileged_true",
-    "permissions_write_all",
-    "pull_request_target",
-    "unpinned_action",
-}
 
 _FAKE_FILE_BASENAMES = {"diff.txt", "cd", "git", "python"}
 
@@ -230,84 +219,13 @@ def parse_diff(
     return result
 
 
-def _extract_dependency_changes(parsed_file: ParsedFile) -> list[dict]:
-    filename = PurePosixPath(parsed_file.file_path).name.lower()
-    if filename == "requirements.txt":
-        return _extract_requirements_changes(parsed_file.added_lines)
-    if filename == "package.json":
-        return _extract_package_json_changes(parsed_file.added_lines)
-    return []
-
-
-def _extract_requirements_changes(added_lines: list[tuple[int, str]]) -> list[dict]:
-    seen: dict[tuple[str, str], dict] = {}
-    requirement_re = re.compile(r"^\s*([A-Za-z0-9_.-]+)==([^\s#]+)")
-    for line_num, content in added_lines:
-        match = requirement_re.match(content)
-        if not match:
-            continue
-        pkg = match.group(1)
-        ver = match.group(2).rstrip(",")
-        key = (pkg.lower(), ver)
-        if key not in seen:
-            seen[key] = {"package": pkg, "version": ver, "manager": "pip", "line": line_num}
-    return list(seen.values())
-
-
-def _extract_package_json_changes(added_lines: list[tuple[int, str]]) -> list[dict]:
-    seen: dict[tuple[str, str], dict] = {}
-    package_re = re.compile(r'^\s*"([^"]+)"\s*:\s*"([^"]+)"\s*,?\s*$')
-    ignored_keys = {
-        "name", "version", "description", "main", "scripts",
-        "dependencies", "devDependencies", "peerDependencies", "optionalDependencies",
-    }
-    for line_num, content in added_lines:
-        match = package_re.match(content)
-        if not match:
-            continue
-        package, version = match.groups()
-        if package in ignored_keys:
-            continue
-        key = (package.lower(), version)
-        if key not in seen:
-            seen[key] = {"package": package, "version": version, "manager": "npm", "line": line_num}
-    return list(seen.values())
-
-
-def _is_ci_cd_dangerous(security_signals: list[str]) -> bool:
-    return bool(set(security_signals) & _CI_CD_DANGEROUS_SIGNALS)
-
-
-def _apply_final_overrides(result: FileClassification) -> FileClassification:
-    if result.is_test_only:
-        result.should_create_security_finding = False
-        result.audit_log_only = True
-        result.risk_score = 0
-        if result.file_category != FileCategory.AUTH:
-            result.change_types = [
-                ct for ct in result.change_types
-                if ct != ChangeType.AUTH_LOGIC_CHANGED
-            ]
-            result.change_confidence.pop(ChangeType.AUTH_LOGIC_CHANGED.value, None)
-        return result
-
-    if result.file_category == FileCategory.DOCS:
-        result.should_create_security_finding = False
-        result.audit_log_only = True
-
-    if result.audit_log_only:
-        result.risk_score = min(result.risk_score, 5)
-
-    return result
-
-
 def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
     parsed_file = parse_diff(changed_file)
     file_category = classify_file(changed_file.filename)
     change_types = classify_changes(parsed_file, file_category)
     change_confidence = classify_change_confidence(parsed_file, file_category, change_types)
     security_signals = classify_security_signals(parsed_file)
-    dependency_changes = _extract_dependency_changes(parsed_file)
+    dependency_changes = extract_dependency_changes(parsed_file)
     risk = compute_risk_score(file_category, change_types, security_signals)
 
     is_test_only = (
@@ -316,26 +234,17 @@ def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
     )
     is_docs = file_category == FileCategory.DOCS
     is_ci_cd = file_category == FileCategory.CI_CD
-    ci_cd_dangerous = is_ci_cd and _is_ci_cd_dangerous(security_signals)
-
-    has_security_signal = len(security_signals) > 0
-
-    # A finding is created when ANY of the following is true (all deterministic,
-    # no LLM involvement). Real security signals override test/docs audit-only
-    # defaults so secrets committed in tests are still surfaced.
-    should_create = has_security_signal or (
-        not (is_test_only or is_docs) and (
-            risk >= _FINDING_RISK_THRESHOLD
-            or ChangeType.AUTH_LOGIC_CHANGED in change_types
-            or ChangeType.SECRET_REFERENCE in change_types
-            or ChangeType.DEPENDENCY_ADDED in change_types
-            or ci_cd_dangerous
-        )
+    has_dangerous_ci_cd_signal = is_ci_cd and is_ci_cd_dangerous(security_signals)
+    should_create, audit_log_only = should_create_finding(
+        file_category,
+        change_types,
+        security_signals,
+        risk,
+        is_test_only=is_test_only,
+        is_docs=is_docs,
+        is_ci_cd=is_ci_cd,
+        ci_cd_dangerous=has_dangerous_ci_cd_signal,
     )
-    if is_ci_cd:
-        should_create = has_security_signal or ci_cd_dangerous
-
-    audit_log_only = not should_create and (is_test_only or is_docs or is_ci_cd)
 
     result = FileClassification(
         file_path=changed_file.filename,
@@ -353,7 +262,7 @@ def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
         audit_log_only=audit_log_only,
         parsing_truncated=parsed_file.parsing_truncated,
     )
-    return _apply_final_overrides(result)
+    return apply_final_overrides(result)
 
 
 if __name__ == "__main__":

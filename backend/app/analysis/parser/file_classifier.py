@@ -2,41 +2,8 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
+from app.analysis.classifier.taxonomy import AUTH_KEYWORDS, DEPENDENCY_FILENAMES
 from app.analysis.models.classification_models import FileCategory
-
-_DEPENDENCY_FILENAMES = {
-    "package.json",
-    "requirements.txt",
-    "pipfile",
-    "pyproject.toml",
-    "go.mod",
-    "cargo.toml",
-    "yarn.lock",
-    "package-lock.json",
-    "poetry.lock",
-    "gemfile",
-    "composer.json",
-    "pom.xml",
-    "build.gradle",
-    "pnpm-lock.yaml",
-}
-
-_AUTH_KEYWORDS = {
-    "auth",
-    "oauth",
-    "jwt",
-    "login",
-    "logout",
-    "session",
-    "token",
-    "password",
-    "permission",
-    "role",
-    "guard",
-    "credential",
-    "authorize",
-    "authenticate",
-}
 
 _CI_CD_PATH_PREFIXES = (
     ".github/workflows/",
@@ -72,7 +39,7 @@ def classify_file(file_path: str) -> FileCategory:
     if _is_docs(lower_path, lower_name, lower_parts, lower_suffix):
         return FileCategory.DOCS
 
-    if lower_name in _DEPENDENCY_FILENAMES:
+    if lower_name in DEPENDENCY_FILENAMES:
         return FileCategory.DEPENDENCY
 
     if _is_ci_cd(lower_path, lower_name):
@@ -125,7 +92,7 @@ def _is_docs(lower_path: str, lower_name: str, lower_parts: set[str], lower_suff
 
 def _is_auth(lower_path: str, lower_name: str, lower_parts: set[str]) -> bool:
     for part in lower_parts:
-        for keyword in _AUTH_KEYWORDS:
+        for keyword in AUTH_KEYWORDS:
             if keyword in part:
                 return True
     return False
