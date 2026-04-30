@@ -140,24 +140,23 @@ def _any_line_is_function(lines: list[tuple[int, str]]) -> bool:
 
 
 def _has_auth_signal(parsed_file: ParsedFile, file_category: FileCategory) -> bool:
+    if file_category != FileCategory.AUTH:
+        return False
+
     all_lines = parsed_file.added_lines + parsed_file.removed_lines
     if not all_lines:
         return False
 
-    # Always check content keywords regardless of category.
     for _ln, content in all_lines:
         if any(kw in content.lower() for kw in _AUTH_KEYWORDS):
             return True
 
-    # For auth-category files: flag if there are meaningful (non-whitespace,
-    # non-comment) code changes. Whitespace-only and comment-only diffs in auth
-    # files are low-noise and should not trigger AUTH_LOGIC_CHANGED.
-    if file_category == FileCategory.AUTH:
-        _COMMENT_PREFIXES = ("#", "//", "/*", "*", "<!--")
-        for _ln, content in all_lines:
-            stripped = content.strip()
-            if stripped and not any(stripped.startswith(p) for p in _COMMENT_PREFIXES):
-                return True
+    # For auth files: flag meaningful non-whitespace, non-comment code changes.
+    _COMMENT_PREFIXES = ("#", "//", "/*", "*", "<!--")
+    for _ln, content in all_lines:
+        stripped = content.strip()
+        if stripped and not any(stripped.startswith(p) for p in _COMMENT_PREFIXES):
+            return True
 
     return False
 

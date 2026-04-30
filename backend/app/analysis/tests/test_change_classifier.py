@@ -56,16 +56,16 @@ def test_auth_logic_changed_by_category():
     assert ChangeType.AUTH_LOGIC_CHANGED in result
 
 
-def test_auth_logic_changed_by_keyword_in_non_auth_file():
+def test_auth_logic_not_changed_by_keyword_in_non_auth_file():
     pf = _make_file(added=["  validateToken(req.headers.auth)"])
     result = classify_changes(pf, FileCategory.UNKNOWN)
-    assert ChangeType.AUTH_LOGIC_CHANGED in result
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
 
 
-def test_auth_logic_changed_by_jwt_keyword():
+def test_auth_logic_not_changed_by_jwt_keyword_in_non_auth_file():
     pf = _make_file(added=["  const decoded = jwt.verify(token, secret)"])
     result = classify_changes(pf, FileCategory.UNKNOWN)
-    assert ChangeType.AUTH_LOGIC_CHANGED in result
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
 
 
 def test_dependency_added():
