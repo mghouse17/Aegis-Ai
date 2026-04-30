@@ -162,8 +162,8 @@ def test_threshold_constants_within_range():
 
 
 def test_finding_threshold_is_at_or_above_medium():
-    from app.analysis.parser.diff_parser import _FINDING_RISK_THRESHOLD
-    assert _FINDING_RISK_THRESHOLD >= RISK_MEDIUM
+    from app.analysis.classifier.risk_score import FINDING_RISK_THRESHOLD
+    assert FINDING_RISK_THRESHOLD >= RISK_MEDIUM
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +183,8 @@ def test_dependency_added_triggers_finding():
     assert ChangeType.DEPENDENCY_ADDED in result.change_types
 
 
-def test_ci_cd_change_triggers_finding():
+def test_ci_cd_safe_change_is_audit_only():
+    # A safe CI/CD change (no dangerous signals) → audit-only, no finding.
     from app.analysis.models.diff_models import ChangedFileInput
     from app.analysis.parser.diff_parser import parse_and_classify
 
@@ -194,7 +195,8 @@ def test_ci_cd_change_triggers_finding():
         patch=patch,
     )
     result = parse_and_classify(inp)
-    assert result.should_create_security_finding is True
+    assert result.should_create_security_finding is False
+    assert result.audit_log_only is True
     assert ChangeType.CI_CD_CHANGE in result.change_types
 
 

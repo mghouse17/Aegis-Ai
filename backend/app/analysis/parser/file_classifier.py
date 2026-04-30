@@ -20,9 +20,10 @@ _DEPENDENCY_FILENAMES = {
     "build.gradle",
 }
 
+# "middleware" and "access" removed: too broad — CORS/rate-limit/logging middleware
+# and access-log utilities were incorrectly classified as AUTH.
 _AUTH_KEYWORDS = {
     "auth",
-    "middleware",
     "oauth",
     "jwt",
     "login",
@@ -32,7 +33,6 @@ _AUTH_KEYWORDS = {
     "password",
     "permission",
     "role",
-    "access",
     "guard",
     "credential",
     "authorize",
@@ -56,6 +56,10 @@ _API_FILENAMES = {"views.py", "urls.py"}
 _FRONTEND_SUFFIXES = {".jsx", ".tsx", ".vue", ".svelte"}
 _FRONTEND_PATH_KEYWORDS = {"components", "pages"}
 
+_DOC_SUFFIXES = {".md", ".markdown", ".mdx", ".rst"}
+_DOC_FILENAMES = {"readme", "changelog", "license", "contributing", "authors", "notice"}
+_DOC_DIRS = {"docs", "doc", "documentation"}
+
 
 def classify_file(file_path: str) -> FileCategory:
     p = PurePosixPath(file_path)
@@ -68,31 +72,35 @@ def classify_file(file_path: str) -> FileCategory:
     if _is_test(lower_path, lower_name, lower_parts):
         return FileCategory.TEST
 
-    # 2. Auth
-    if _is_auth(lower_path, lower_name, lower_parts):
+    # 2. Docs — must run before auth so docs/auth/overview.md doesn't become AUTH
+    if _is_docs(lower_name, lower_suffix, lower_parts):
+        return FileCategory.DOCS
+
+    # 3. Auth
+    if _is_auth(lower_parts):
         return FileCategory.AUTH
 
-    # 3. Dependency (exact filename match)
+    # 4. Dependency (exact filename match)
     if lower_name in _DEPENDENCY_FILENAMES:
         return FileCategory.DEPENDENCY
 
-    # 4. CI/CD — must run before Config so .github/workflows/*.yml doesn't match yaml rule
+    # 5. CI/CD — must run before Config so .github/workflows/*.yml doesn't match yaml rule
     if _is_ci_cd(lower_path, lower_name):
         return FileCategory.CI_CD
 
-    # 5. Config
+    # 6. Config
     if _is_config(lower_path, lower_name, lower_suffix):
         return FileCategory.CONFIG
 
-    # 6. Database
-    if _is_database(lower_path, lower_name, lower_parts, lower_suffix):
+    # 7. Database
+    if _is_database(lower_parts, lower_suffix):
         return FileCategory.DATABASE
 
-    # 7. API
-    if _is_api(lower_path, lower_name, lower_parts):
+    # 8. API
+    if _is_api(lower_name, lower_parts):
         return FileCategory.API
 
-    # 8. Frontend
+    # 9. Frontend
     if _is_frontend(lower_path, lower_suffix, lower_parts):
         return FileCategory.FRONTEND
 
@@ -114,8 +122,15 @@ def _is_test(lower_path: str, lower_name: str, lower_parts: set[str]) -> bool:
     return False
 
 
-def _is_auth(lower_path: str, lower_name: str, lower_parts: set[str]) -> bool:
-    # Check each path segment against auth keywords
+def _is_docs(lower_name: str, lower_suffix: str, lower_parts: set[str]) -> bool:
+    if lower_suffix in _DOC_SUFFIXES:
+        return True
+    if PurePosixPath(lower_name).stem in _DOC_FILENAMES:
+        return True
+    return bool(lower_parts & _DOC_DIRS)
+
+
+def _is_auth(lower_parts: set[str]) -> bool:
     for part in lower_parts:
         for keyword in _AUTH_KEYWORDS:
             if keyword in part:
@@ -125,6 +140,8 @@ def _is_auth(lower_path: str, lower_name: str, lower_parts: set[str]) -> bool:
 
 def _is_config(lower_path: str, lower_name: str, lower_suffix: str) -> bool:
     if lower_name == ".env" or lower_name.startswith(".env."):
+        return True
+    if lower_name in {"config.py", "settings.py"}:
         return True
     if lower_suffix in (".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf"):
         return True
@@ -146,7 +163,7 @@ def _is_ci_cd(lower_path: str, lower_name: str) -> bool:
     return False
 
 
-def _is_database(lower_path: str, lower_name: str, lower_parts: set[str], lower_suffix: str) -> bool:
+def _is_database(lower_parts: set[str], lower_suffix: str) -> bool:
     if lower_suffix == ".sql":
         return True
     for part in lower_parts:
@@ -157,7 +174,7 @@ def _is_database(lower_path: str, lower_name: str, lower_parts: set[str], lower_
     return False
 
 
-def _is_api(lower_path: str, lower_name: str, lower_parts: set[str]) -> bool:
+def _is_api(lower_name: str, lower_parts: set[str]) -> bool:
     if lower_name in _API_FILENAMES:
         return True
     for part in lower_parts:

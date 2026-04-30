@@ -100,10 +100,6 @@ def test_frontend_vue():
     assert classify_file("src/views/Home.vue") == FileCategory.FRONTEND
 
 
-def test_unknown_readme():
-    assert classify_file("README.md") == FileCategory.UNKNOWN
-
-
 def test_unknown_makefile():
     assert classify_file("Makefile") == FileCategory.UNKNOWN
 
@@ -114,4 +110,60 @@ def test_test_beats_auth_priority():
 
 
 def test_case_insensitive_auth():
+    # "auth" keyword in path → AUTH even with mixed case
     assert classify_file("src/AUTH/middleware.py") == FileCategory.AUTH
+
+
+# ---------------------------------------------------------------------------
+# DOCS category (Issue 8)
+# ---------------------------------------------------------------------------
+
+
+def test_docs_readme():
+    assert classify_file("README.md") == FileCategory.DOCS
+
+
+def test_docs_markdown_in_auth_dir():
+    # docs/auth/overview.md must be DOCS, not AUTH (DOCS check runs first)
+    assert classify_file("docs/auth/overview.md") == FileCategory.DOCS
+
+
+def test_docs_rst_file():
+    assert classify_file("docs/api_reference.rst") == FileCategory.DOCS
+
+
+def test_docs_changelog():
+    assert classify_file("CHANGELOG.md") == FileCategory.DOCS
+
+
+# ---------------------------------------------------------------------------
+# Middleware false-positive prevention (Issue 3)
+# ---------------------------------------------------------------------------
+
+
+def test_cors_middleware_is_not_auth():
+    # "middleware" was removed from _AUTH_KEYWORDS; cors.ts has no auth terms
+    assert classify_file("src/middleware/cors.ts") == FileCategory.UNKNOWN
+
+
+def test_rate_limit_middleware_is_not_auth():
+    assert classify_file("src/middleware/rate_limiter.py") == FileCategory.UNKNOWN
+
+
+def test_auth_middleware_is_still_auth():
+    # "auth" keyword in filename keeps AUTH classification
+    assert classify_file("src/middleware/auth.ts") == FileCategory.AUTH
+
+
+def test_session_middleware_is_still_auth():
+    # "session" keyword remains in _AUTH_KEYWORDS
+    assert classify_file("src/middleware/session.ts") == FileCategory.AUTH
+
+
+# ---------------------------------------------------------------------------
+# "access" keyword removal (Issue 3)
+# ---------------------------------------------------------------------------
+
+
+def test_access_log_is_not_auth():
+    assert classify_file("logs/access_log.py") != FileCategory.AUTH

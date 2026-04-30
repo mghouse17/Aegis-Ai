@@ -34,12 +34,12 @@ def test_exec_detection():
 def test_process_env_detection():
     pf = _make_file(["const key = process.env.API_KEY"])
     signals = classify_security_signals(pf)
-    assert "process.env" in signals
+    assert "process_env" in signals
 
 
 def test_os_environ_detection():
     pf = _make_file(["secret = os.environ.get('SECRET_KEY')"])
-    assert "os.environ" in signals_for(pf)
+    assert "os_environ" in signals_for(pf)
 
 
 def signals_for(pf: ParsedFile) -> list[str]:
@@ -58,22 +58,22 @@ def test_raw_sql_insert():
 
 def test_inner_html():
     pf = _make_file(['element.innerHTML = userContent'])
-    assert "innerHTML" in classify_security_signals(pf)
+    assert "inner_html" in classify_security_signals(pf)
 
 
 def test_dangerously_set_inner_html():
     pf = _make_file(['<div dangerouslySetInnerHTML={{ __html: content }} />'])
-    assert "dangerouslySetInnerHTML" in classify_security_signals(pf)
+    assert "dangerously_set_inner_html" in classify_security_signals(pf)
 
 
 def test_reject_unauthorized():
     pf = _make_file(['  rejectUnauthorized: false'])
-    assert "rejectUnauthorized" in classify_security_signals(pf)
+    assert "tls_verification_disabled" in classify_security_signals(pf)
 
 
 def test_verify_false():
     pf = _make_file(['requests.get(url, verify=False)'])
-    assert "verify_false" in classify_security_signals(pf)
+    assert "tls_verification_disabled" in classify_security_signals(pf)
 
 
 def test_subprocess_detection():
@@ -127,7 +127,7 @@ def test_results_are_deduplicated():
 def test_api_key_variants():
     pf = _make_file(["const apiKey = config.api_key"])
     signals = classify_security_signals(pf)
-    assert "apiKey" in signals
+    assert "api_key" in signals
 
 
 def test_password_keyword():
@@ -146,15 +146,19 @@ def test_shell_true_with_spaces():
     assert "shell_true" in classify_security_signals(pf)
 
 
-def test_reject_unauthorized_no_space():
-    # No-space variant: `rejectUnauthorized:false`
+def test_tls_verification_disabled_no_space():
     pf = _make_file(["{ rejectUnauthorized:false }"])
-    assert "rejectUnauthorized" in classify_security_signals(pf)
+    assert "tls_verification_disabled" in classify_security_signals(pf)
 
 
-def test_reject_unauthorized_mixed_case():
+def test_tls_verification_disabled_mixed_case():
     pf = _make_file(["rejectUnauthorized: False"])
-    assert "rejectUnauthorized" in classify_security_signals(pf)
+    assert "tls_verification_disabled" in classify_security_signals(pf)
+
+
+def test_tls_verification_disabled_ssl_verify():
+    pf = _make_file(["requests.get(url, ssl_verify=False)"])
+    assert "tls_verification_disabled" in classify_security_signals(pf)
 
 
 def test_weak_hash_md5_call():

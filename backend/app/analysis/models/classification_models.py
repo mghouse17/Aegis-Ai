@@ -11,6 +11,7 @@ class FileCategory(str, Enum):
     DEPENDENCY = "dependency"
     CONFIG = "config"
     TEST = "test"
+    DOCS = "docs"
     API = "api"
     DATABASE = "database"
     CI_CD = "ci_cd"
@@ -26,9 +27,15 @@ class ChangeType(str, Enum):
     DEPENDENCY_REMOVED = "dependency_removed"
     CONFIG_CHANGE = "config_change"
     CI_CD_CHANGE = "ci_cd_change"
+    DOCS_CHANGE = "docs_change"
     SECRET_REFERENCE = "secret_reference"
     TEST_ONLY_CHANGE = "test_only_change"
     UNKNOWN = "unknown"
+
+
+def _lines_to_dicts(lines: list[tuple[int, str]]) -> list[dict]:
+    """Serialize (line_number, content) tuples as explicit {line, content} objects."""
+    return [{"line": ln, "content": c} for ln, c in lines]
 
 
 @dataclass
@@ -58,14 +65,14 @@ class FileClassification:
                     "old_count": h.old_count,
                     "new_start": h.new_start,
                     "new_count": h.new_count,
-                    "added_lines": h.added_lines,
-                    "removed_lines": h.removed_lines,
-                    "context_lines": h.context_lines,
+                    "added_lines": _lines_to_dicts(h.added_lines),
+                    "removed_lines": _lines_to_dicts(h.removed_lines),
+                    "context_lines": _lines_to_dicts(h.context_lines),
                 }
                 for h in self.hunks
             ],
-            "added_lines": self.added_lines,
-            "removed_lines": self.removed_lines,
+            "added_lines": _lines_to_dicts(self.added_lines),
+            "removed_lines": _lines_to_dicts(self.removed_lines),
             "change_types": [ct.value for ct in self.change_types],
             "security_signals": self.security_signals,
             "risk_score": self.risk_score,

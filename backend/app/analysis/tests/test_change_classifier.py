@@ -113,12 +113,49 @@ def test_test_only_change_not_a_security_finding():
 
 
 def test_unknown_fallback():
-    pf = _make_file(file_path="README.md", added=["Some text"])
+    pf = _make_file(file_path="util.py", added=["Some text"])
     result = classify_changes(pf, FileCategory.UNKNOWN)
     assert ChangeType.UNKNOWN in result
 
 
-def test_secret_reference_detected():
-    pf = _make_file(added=["const apiKey = process.env.MY_SECRET_KEY"])
-    result = classify_changes(pf, FileCategory.UNKNOWN)
-    assert ChangeType.SECRET_REFERENCE in result
+def test_docs_change():
+    pf = _make_file(file_path="README.md", added=["Some text"])
+    result = classify_changes(pf, FileCategory.DOCS)
+    assert ChangeType.DOCS_CHANGE in result
+
+
+# ---------------------------------------------------------------------------
+# AUTH false-positive prevention (Issue 2)
+# ---------------------------------------------------------------------------
+
+
+def test_whitespace_only_auth_change_does_not_trigger_auth_logic_changed():
+    pf = _make_file(added=["   ", "  "], file_path="src/auth/login.py")
+    result = classify_changes(pf, FileCategory.AUTH)
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
+
+
+def test_comment_only_auth_change_does_not_trigger_auth_logic_changed():
+    pf = _make_file(
+        added=["# fix typo in comment", "// another comment"],
+        file_path="src/auth/login.py",
+    )
+    result = classify_changes(pf, FileCategory.AUTH)
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
+
+
+def test_meaningful_code_in_auth_file_triggers_auth_logic_changed():
+    pf = _make_file(added=["    return True"], file_path="src/auth/login.py")
+    result = classify_changes(pf, FileCategory.AUTH)
+    assert ChangeType.AUTH_LOGIC_CHANGED in result
+
+
+def test_empty_diff_in_auth_file_does_not_trigger():
+    pf = _make_file(added=[], removed=[], file_path="src/auth/login.py")
+    result = classify_changes(pf, FileCategory.AUTH)
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
+
+
+# NOTE: SECRET_REFERENCE is no longer produced by classify_changes.
+# It is derived from security_signals inside parse_and_classify.
+# See test_edge_cases.py::test_secret_reference_derived_from_signals.

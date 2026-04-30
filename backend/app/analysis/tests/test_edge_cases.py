@@ -124,3 +124,31 @@ def test_multiple_hunks_are_all_parsed():
     assert len(parsed.hunks) == 2
     assert len(parsed.added_lines) == 2
     assert len(parsed.removed_lines) == 2
+
+
+def test_secret_reference_derived_from_signals():
+    # SECRET_REFERENCE is now derived in parse_and_classify from security_signals,
+    # not directly from classify_changes. Verify end-to-end.
+    from app.analysis.models.classification_models import ChangeType
+    patch = "@@ -1,1 +1,2 @@\n context\n+const apiKey = process.env.MY_SECRET_KEY"
+    inp = ChangedFileInput(filename="config.js", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert ChangeType.SECRET_REFERENCE in result.change_types
+    assert result.should_create_security_finding is True
+
+
+def test_docs_file_is_audit_log_only():
+    patch = "@@ -1,1 +1,2 @@\n context\n+Added a new section."
+    inp = ChangedFileInput(filename="README.md", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.file_category == FileCategory.DOCS
+    assert result.should_create_security_finding is False
+    assert result.audit_log_only is True
+
+
+def test_docs_in_auth_dir_does_not_create_finding():
+    patch = "@@ -1,1 +1,2 @@\n context\n+Updated auth flow description."
+    inp = ChangedFileInput(filename="docs/auth/overview.md", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    assert result.file_category == FileCategory.DOCS
+    assert result.should_create_security_finding is False

@@ -32,16 +32,9 @@ _AUTH_KEYWORDS = (
     "authenticate",
 )
 
-_SECRET_KEYWORDS = (
-    "secret",
-    "api_key",
-    "apikey",
-    "apiKey",
-    "password",
-    "token",
-    "private_key",
-    "privatekey",
-)
+# Prefixes that mark a line as a comment rather than a code change.
+# A diff in an auth file with only comment/whitespace lines is not a security event.
+_COMMENT_PREFIXES = ("#", "//", "/*", "*", "<!--")
 
 
 def classify_changes(
@@ -73,8 +66,12 @@ def classify_changes(
     if file_category == FileCategory.CI_CD:
         result.append(ChangeType.CI_CD_CHANGE)
 
-    if _has_secret_reference(parsed_file.added_lines):
-        result.append(ChangeType.SECRET_REFERENCE)
+    if file_category == FileCategory.DOCS:
+        result.append(ChangeType.DOCS_CHANGE)
+
+    # NOTE: SECRET_REFERENCE is no longer set here.
+    # It is derived in parse_and_classify from security_signals so that
+    # there is a single source of truth for secret detection.
 
     # test_only_change: file is a test AND no other signal types were detected
     if file_category == FileCategory.TEST and not result:
@@ -100,21 +97,22 @@ def _any_line_is_function(lines: list[tuple[int, str]]) -> bool:
 
 
 def _has_auth_signal(parsed_file: ParsedFile, file_category: FileCategory) -> bool:
-    if file_category == FileCategory.AUTH:
-        return True
     all_lines = parsed_file.added_lines + parsed_file.removed_lines
+    if not all_lines:
+        return False
+
+    # Any line in ANY category that contains an auth keyword is a signal.
     for _ln, content in all_lines:
-        lower = content.lower()
-        if any(kw in lower for kw in _AUTH_KEYWORDS):
+        if any(kw in content.lower() for kw in _AUTH_KEYWORDS):
             return True
-    return False
 
-
-def _has_secret_reference(added_lines: list[tuple[int, str]]) -> bool:
-    for _ln, content in added_lines:
-        lower = content.lower()
-        if any(kw in lower for kw in _SECRET_KEYWORDS):
-            # Require an assignment or function call context to reduce noise
-            if "=" in content or "(" in content:
+    # For AUTH-category files: also flag if there are meaningful (non-whitespace,
+    # non-comment) code changes. Whitespace-only or comment-only diffs in auth
+    # files are maintenance noise, not security events.
+    if file_category == FileCategory.AUTH:
+        for _ln, content in all_lines:
+            stripped = content.strip()
+            if stripped and not any(stripped.startswith(p) for p in _COMMENT_PREFIXES):
                 return True
+
     return False
