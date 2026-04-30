@@ -183,7 +183,7 @@ def test_dependency_added_triggers_finding():
     assert ChangeType.DEPENDENCY_ADDED in result.change_types
 
 
-def test_ci_cd_change_triggers_finding():
+def test_safe_ci_cd_change_is_audit_only():
     from app.analysis.models.diff_models import ChangedFileInput
     from app.analysis.parser.diff_parser import parse_and_classify
 
@@ -194,8 +194,24 @@ def test_ci_cd_change_triggers_finding():
         patch=patch,
     )
     result = parse_and_classify(inp)
-    assert result.should_create_security_finding is True
+    assert result.should_create_security_finding is False
+    assert result.audit_log_only is True
     assert ChangeType.CI_CD_CHANGE in result.change_types
+
+
+def test_dangerous_ci_cd_change_triggers_finding():
+    from app.analysis.models.diff_models import ChangedFileInput
+    from app.analysis.parser.diff_parser import parse_and_classify
+
+    patch = '@@ -1,2 +1,3 @@\n name: Deploy\n+  token: "ghp_123456789SECRET"\n on: [push]'
+    inp = ChangedFileInput(
+        filename=".github/workflows/deploy.yml",
+        status="modified",
+        patch=patch,
+    )
+    result = parse_and_classify(inp)
+    assert result.should_create_security_finding is True
+    assert "github_token" in result.security_signals
 
 
 def test_low_risk_unknown_file_does_not_trigger_finding():

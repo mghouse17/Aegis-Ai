@@ -122,3 +122,35 @@ def test_secret_reference_detected():
     pf = _make_file(added=["const apiKey = process.env.MY_SECRET_KEY"])
     result = classify_changes(pf, FileCategory.UNKNOWN)
     assert ChangeType.SECRET_REFERENCE in result
+
+
+# ---------------------------------------------------------------------------
+# Auth false-positive prevention (issues 6 + 7)
+# ---------------------------------------------------------------------------
+
+
+def test_whitespace_only_auth_change_does_not_trigger_auth_logic_changed():
+    pf = _make_file(added=["   ", "  "], file_path="src/auth/login.py")
+    result = classify_changes(pf, FileCategory.AUTH)
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
+
+
+def test_comment_only_auth_change_does_not_trigger_auth_logic_changed():
+    pf = _make_file(
+        added=["# fix typo in comment", "// another comment"],
+        file_path="src/auth/login.py",
+    )
+    result = classify_changes(pf, FileCategory.AUTH)
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
+
+
+def test_meaningful_code_in_auth_file_triggers_auth_logic_changed():
+    pf = _make_file(added=["    return True"], file_path="src/auth/login.py")
+    result = classify_changes(pf, FileCategory.AUTH)
+    assert ChangeType.AUTH_LOGIC_CHANGED in result
+
+
+def test_empty_diff_in_auth_file_does_not_trigger():
+    pf = _make_file(added=[], removed=[], file_path="src/auth/login.py")
+    result = classify_changes(pf, FileCategory.AUTH)
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
