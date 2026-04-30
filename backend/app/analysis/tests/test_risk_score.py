@@ -196,6 +196,7 @@ def test_safe_ci_cd_change_is_audit_only():
     result = parse_and_classify(inp)
     assert result.should_create_security_finding is False
     assert result.audit_log_only is True
+    assert result.risk_score <= 5
     assert ChangeType.CI_CD_CHANGE in result.change_types
 
 
@@ -211,6 +212,7 @@ def test_dangerous_ci_cd_change_triggers_finding():
     )
     result = parse_and_classify(inp)
     assert result.should_create_security_finding is True
+    assert result.audit_log_only is False
     assert "github_token" in result.security_signals
 
 

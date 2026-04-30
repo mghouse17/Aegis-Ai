@@ -278,6 +278,29 @@ def _is_ci_cd_dangerous(security_signals: list[str]) -> bool:
     return bool(set(security_signals) & _CI_CD_DANGEROUS_SIGNALS)
 
 
+def _apply_final_overrides(result: FileClassification) -> FileClassification:
+    if result.is_test_only:
+        result.should_create_security_finding = False
+        result.audit_log_only = True
+        result.risk_score = 0
+        if result.file_category != FileCategory.AUTH:
+            result.change_types = [
+                ct for ct in result.change_types
+                if ct != ChangeType.AUTH_LOGIC_CHANGED
+            ]
+            result.change_confidence.pop(ChangeType.AUTH_LOGIC_CHANGED.value, None)
+        return result
+
+    if result.file_category == FileCategory.DOCS:
+        result.should_create_security_finding = False
+        result.audit_log_only = True
+
+    if result.audit_log_only:
+        result.risk_score = min(result.risk_score, 5)
+
+    return result
+
+
 def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
     parsed_file = parse_diff(changed_file)
     file_category = classify_file(changed_file.filename)
@@ -314,7 +337,7 @@ def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
 
     audit_log_only = not should_create and (is_test_only or is_docs or is_ci_cd)
 
-    return FileClassification(
+    result = FileClassification(
         file_path=changed_file.filename,
         file_category=file_category,
         is_test_only=is_test_only,
@@ -330,6 +353,7 @@ def parse_and_classify(changed_file: ChangedFileInput) -> FileClassification:
         audit_log_only=audit_log_only,
         parsing_truncated=parsed_file.parsing_truncated,
     )
+    return _apply_final_overrides(result)
 
 
 if __name__ == "__main__":
