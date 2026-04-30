@@ -70,3 +70,6 @@ secrets.json
 #Vscode Extensions
 .vscode/
 .vscode/extensions/
+
+#diff
+diff.txt

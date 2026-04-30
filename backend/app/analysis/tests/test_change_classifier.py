@@ -56,16 +56,16 @@ def test_auth_logic_changed_by_category():
     assert ChangeType.AUTH_LOGIC_CHANGED in result
 
 
-def test_auth_logic_changed_by_keyword_in_non_auth_file():
+def test_auth_logic_not_changed_by_keyword_in_non_auth_file():
     pf = _make_file(added=["  validateToken(req.headers.auth)"])
     result = classify_changes(pf, FileCategory.UNKNOWN)
-    assert ChangeType.AUTH_LOGIC_CHANGED in result
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
 
 
-def test_auth_logic_changed_by_jwt_keyword():
+def test_auth_logic_not_changed_by_jwt_keyword_in_non_auth_file():
     pf = _make_file(added=["  const decoded = jwt.verify(token, secret)"])
     result = classify_changes(pf, FileCategory.UNKNOWN)
-    assert ChangeType.AUTH_LOGIC_CHANGED in result
+    assert ChangeType.AUTH_LOGIC_CHANGED not in result
 
 
 def test_dependency_added():
@@ -113,19 +113,19 @@ def test_test_only_change_not_a_security_finding():
 
 
 def test_unknown_fallback():
-    pf = _make_file(file_path="util.py", added=["Some text"])
+    pf = _make_file(file_path="README.md", added=["Some text"])
     result = classify_changes(pf, FileCategory.UNKNOWN)
     assert ChangeType.UNKNOWN in result
 
 
-def test_docs_change():
-    pf = _make_file(file_path="README.md", added=["Some text"])
-    result = classify_changes(pf, FileCategory.DOCS)
-    assert ChangeType.DOCS_CHANGE in result
+def test_secret_reference_detected():
+    pf = _make_file(added=["const apiKey = process.env.MY_SECRET_KEY"])
+    result = classify_changes(pf, FileCategory.UNKNOWN)
+    assert ChangeType.SECRET_REFERENCE in result
 
 
 # ---------------------------------------------------------------------------
-# AUTH false-positive prevention (Issue 2)
+# Auth false-positive prevention (issues 6 + 7)
 # ---------------------------------------------------------------------------
 
 
@@ -154,8 +154,3 @@ def test_empty_diff_in_auth_file_does_not_trigger():
     pf = _make_file(added=[], removed=[], file_path="src/auth/login.py")
     result = classify_changes(pf, FileCategory.AUTH)
     assert ChangeType.AUTH_LOGIC_CHANGED not in result
-
-
-# NOTE: SECRET_REFERENCE is no longer produced by classify_changes.
-# It is derived from security_signals inside parse_and_classify.
-# See test_edge_cases.py::test_secret_reference_derived_from_signals.

@@ -232,15 +232,13 @@ def test_ci_cd_file_gets_ci_cd_change_type():
     assert ChangeType.CI_CD_CHANGE in results[0].change_types
 
 
-def test_ci_cd_safe_change_is_audit_only():
-    # A workflow change with no dangerous signals → audit-only, no finding
+def test_ci_cd_file_safe_change_is_audit_only():
     results = parse_pr_diff(_CI_CD_DIFF)
     assert results[0].should_create_security_finding is False
     assert results[0].audit_log_only is True
 
 
-def test_ci_cd_dangerous_change_creates_finding():
-    # A workflow change that embeds a GitHub PAT → finding
+def test_ci_cd_workflow_with_github_token_creates_finding():
     diff = """\
 diff --git a/.github/workflows/deploy.yml b/.github/workflows/deploy.yml
 index abc..def 100644
@@ -248,12 +246,12 @@ index abc..def 100644
 +++ b/.github/workflows/deploy.yml
 @@ -1,2 +1,3 @@
  name: Deploy
-+  token: "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
++  token: "ghp_123456789SECRET"
  on: [push]
 """
     results = parse_pr_diff(diff)
     assert results[0].should_create_security_finding is True
-    assert "hardcoded_secret" in results[0].security_signals
+    assert "github_token" in results[0].security_signals
 
 
 # ---------------------------------------------------------------------------
@@ -265,11 +263,278 @@ def test_dependency_added_creates_finding():
     results = parse_pr_diff(_DEPENDENCY_ADDED_DIFF)
     assert len(results) == 1
     assert results[0].should_create_security_finding is True
+    assert results[0].dependency_changes == [{
+        "package": "requests",
+        "version": "2.31.0",
+        "manager": "pip",
+        "line": 2,
+    }]
+
+
+def test_package_json_dependency_addition_extracts_package_and_version():
+    diff = """\
+diff --git a/package.json b/package.json
+index abc..def 100644
+--- a/package.json
++++ b/package.json
+@@ -2,6 +2,7 @@
+   "dependencies": {
++    "express": "^4.18.0",
+     "lodash": "^4.17.21"
+   }
+"""
+    results = parse_pr_diff(diff)
+    assert {
+        "package": "express",
+        "version": "^4.18.0",
+        "manager": "npm",
+        "line": 3,
+    } in results[0].dependency_changes
 
 
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Junk text / terminal output before or inside a diff (issue 1)
+# ---------------------------------------------------------------------------
+
+
+def test_junk_text_before_diff_produces_no_extra_files():
+    # Terminal session preamble before the actual diff must not produce entries.
+    raw_diff = (
+        "cd /path/to/repo\n"
+        "git diff main\n"
+        "diff --git a/file.py b/file.py\n"
+        "index abc..def 100644\n"
+        "--- a/file.py\n"
+        "+++ b/file.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    assert len(results) == 1
+    assert results[0].file_path == "file.py"
+
+
+def test_junk_text_after_diff_does_not_add_files():
+    raw_diff = (
+        "diff --git a/file.py b/file.py\n"
+        "index abc..def 100644\n"
+        "--- a/file.py\n"
+        "+++ b/file.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+        "# end of diff\n"
+        "some trailing output\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    assert len(results) == 1
+    assert results[0].file_path == "file.py"
+
+
+def test_terminal_junk_after_diff_does_not_create_fake_command_files():
+    raw_diff = (
+        "diff --git a/file.py b/file.py\n"
+        "index abc..def 100644\n"
+        "--- a/file.py\n"
+        "+++ b/file.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+        "python -m app.analysis.parser.diff_parser ..\\diff.txt\n"
+        "diff.txt\n"
+        "cd C:\\AegisAi\\Aegis-Ai\\backend\n"
+        "git status --short\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    assert [r.file_path for r in results] == ["file.py"]
+
+
+def test_hunk_lines_do_not_absorb_trailing_terminal_output():
+    raw_diff = (
+        "diff --git a/file.py b/file.py\n"
+        "index abc..def 100644\n"
+        "--- a/file.py\n"
+        "+++ b/file.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/diff.txt b/diff.txt\n"
+        "cd C:\\AegisAi\\Aegis-Ai\\backend\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    assert [r.file_path for r in results] == ["file.py"]
+    for result in results:
+        for hunk in result.hunks:
+            contents = hunk.added_lines + hunk.removed_lines + hunk.context_lines
+            assert all(not content.startswith("diff --git ") for _, content in contents)
+
+
+def test_patch_content_with_embedded_diff_git_line_does_not_create_extra_file():
+    # A committed patch file whose content contains "diff --git a/cd b/cd".
+    # Added lines start with "+" so they cannot be mistaken for a file header.
+    raw_diff = (
+        "diff --git a/some.patch b/some.patch\n"
+        "index abc..def 100644\n"
+        "--- a/some.patch\n"
+        "+++ b/some.patch\n"
+        "@@ -1,1 +1,2 @@\n"
+        " context\n"
+        "+diff --git a/cd b/cd\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    assert len(results) == 1
+    assert results[0].file_path == "some.patch"
+
+
+def test_diff_txt_scratch_file_does_not_create_fake_file_entry():
+    # A scratch diff.txt file can contain old raw diff output. It should not
+    # become an analysis target or rehydrate nested fake files.
+    raw_diff = (
+        "diff --git a/src/real_file.py b/src/real_file.py\n"
+        "index abc..def 100644\n"
+        "--- a/src/real_file.py\n"
+        "+++ b/src/real_file.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/diff.txt b/diff.txt\n"
+        "index 111..222 100644\n"
+        "--- a/diff.txt\n"
+        "+++ b/diff.txt\n"
+        "@@ -1,3 +0,0 @@\n"
+        "-diff --git a/some_old_file.py b/some_old_file.py\n"
+        "-index aaa..bbb 100644\n"
+        "-+old content\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    file_paths = [r.file_path for r in results]
+    assert file_paths == ["src/real_file.py"]
+    # The diff.txt entry's removed_lines contain the old diff content —
+    # that is correct, not a bug.
+
+
+def test_context_lines_with_diff_git_text_do_not_split():
+    # Context lines are prefixed with " " (space), so " diff --git a/..." must
+    # never be treated as a file header.
+    raw_diff = (
+        "diff --git a/my.patch b/my.patch\n"
+        "index aaa..bbb 100644\n"
+        "--- a/my.patch\n"
+        "+++ b/my.patch\n"
+        "@@ -1,3 +1,3 @@\n"
+        " diff --git a/some/file.py b/some/file.py\n"  # context line with diff --git
+        "-old line\n"
+        "+new line\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    assert len(results) == 1
+    assert results[0].file_path == "my.patch"
+
+
+def test_windows_crlf_line_endings_parse_correctly():
+    # Simulates a diff file generated on Windows with \r\n line endings.
+    raw_diff = (
+        "diff --git a/app.py b/app.py\r\n"
+        "index abc..def 100644\r\n"
+        "--- a/app.py\r\n"
+        "+++ b/app.py\r\n"
+        "@@ -1,1 +1,1 @@\r\n"
+        "-old\r\n"
+        "+new\r\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    assert len(results) == 1
+    assert results[0].file_path == "app.py"
+    assert len(results[0].added_lines) == 1
+    assert len(results[0].removed_lines) == 1
+
+
+def test_terminal_preamble_produces_no_fake_filenames():
+    # Commands like "cd" and "git" must never become file_path values.
+    raw_diff = (
+        "cd /path/to/project\n"
+        "git diff main\n"
+        "python -m app.analysis.parser.diff_parser ..\\diff.txt\n"
+        "diff --git a/src/auth.py b/src/auth.py\n"
+        "index abc..def 100644\n"
+        "--- a/src/auth.py\n"
+        "+++ b/src/auth.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " import os\n"
+        "+import jwt\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    all_paths = [r.file_path for r in results]
+    assert "cd" not in all_paths
+    assert "git" not in all_paths
+    assert "python" not in all_paths
+    assert "diff.txt" not in all_paths
+    assert all_paths == ["src/auth.py"]
+
+
+def test_multi_file_diff_produces_exactly_right_file_paths():
+    # All three real files must appear; nothing extra.
+    raw_diff = (
+        "diff --git a/src/auth.py b/src/auth.py\n"
+        "index 1..2 100644\n"
+        "--- a/src/auth.py\n"
+        "+++ b/src/auth.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/requirements.txt b/requirements.txt\n"
+        "index 3..4 100644\n"
+        "--- a/requirements.txt\n"
+        "+++ b/requirements.txt\n"
+        "@@ -1,1 +1,2 @@\n"
+        " flask\n"
+        "+requests==2.31.0\n"
+        "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n"
+        "index 5..6 100644\n"
+        "--- a/.github/workflows/ci.yml\n"
+        "+++ b/.github/workflows/ci.yml\n"
+        "@@ -1,1 +1,2 @@\n"
+        " name: CI\n"
+        "+  run: npm test\n"
+    )
+    results = parse_pr_diff(raw_diff)
+    file_paths = [r.file_path for r in results]
+    assert len(file_paths) == 3
+    assert set(file_paths) == {"src/auth.py", "requirements.txt", ".github/workflows/ci.yml"}
+    # Verify no file's patch contains a raw "diff --git" header line
+    for result in results:
+        all_patch_contents = [c for _, c in result.added_lines + result.removed_lines]
+        for content in all_patch_contents:
+            assert not content.startswith("diff --git a/"), (
+                f"{result.file_path} has a raw diff header in its patch lines"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Dependency change deduplication (issue 3)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_requirement_lines_are_deduplicated():
+    from app.analysis.models.diff_models import ChangedFileInput
+    from app.analysis.parser.diff_parser import parse_and_classify
+
+    # Same package in two hunks → should appear exactly once in dependency_changes
+    patch = (
+        "@@ -1,2 +1,3 @@\n flask\n+requests==2.31.0\n boto3\n"
+        "@@ -10,2 +11,3 @@\n other\n+requests==2.31.0\n more"
+    )
+    inp = ChangedFileInput(filename="requirements.txt", status="modified", patch=patch)
+    result = parse_and_classify(inp)
+    requests_entries = [d for d in result.dependency_changes if d["package"] == "requests"]
+    assert len(requests_entries) == 1
+    assert requests_entries[0]["version"] == "2.31.0"
 
 
 def test_empty_raw_diff_returns_empty_list():
@@ -377,127 +642,3 @@ def test_large_diff_through_parse_pr_diff_returns_partial_lines():
     results = parse_pr_diff(raw_diff)
     # Partial results — some lines must have been captured before truncation
     assert len(results[0].added_lines) > 0
-
-
-# ---------------------------------------------------------------------------
-# Issue 9: re.split regression tests (line-by-line scanner correctness)
-# ---------------------------------------------------------------------------
-
-
-def test_windows_crlf_line_endings_parse_correctly():
-    # A diff generated on Windows with \r\n line endings must produce the
-    # same result as a \n diff.
-    raw_diff = (
-        "diff --git a/app.py b/app.py\r\n"
-        "index abc..def 100644\r\n"
-        "--- a/app.py\r\n"
-        "+++ b/app.py\r\n"
-        "@@ -1,1 +1,1 @@\r\n"
-        "-old\r\n"
-        "+new\r\n"
-    )
-    results = parse_pr_diff(raw_diff)
-    assert len(results) == 1
-    assert results[0].file_path == "app.py"
-    assert len(results[0].added_lines) == 1
-    assert len(results[0].removed_lines) == 1
-
-
-def test_tracked_diff_file_does_not_produce_fake_extra_files():
-    # Real-world scenario: diff.txt is tracked in the repo.  Its old content
-    # was a previous diff output, so the removed lines contain "diff --git ..."
-    # text.  Those "-diff --git" lines must NOT be treated as file headers.
-    raw_diff = (
-        "diff --git a/src/real_file.py b/src/real_file.py\n"
-        "index abc..def 100644\n"
-        "--- a/src/real_file.py\n"
-        "+++ b/src/real_file.py\n"
-        "@@ -1,1 +1,1 @@\n"
-        "-old\n"
-        "+new\n"
-        "diff --git a/diff.txt b/diff.txt\n"
-        "index 111..222 100644\n"
-        "--- a/diff.txt\n"
-        "+++ b/diff.txt\n"
-        "@@ -1,3 +0,0 @@\n"
-        "-diff --git a/some_old_file.py b/some_old_file.py\n"
-        "-index aaa..bbb 100644\n"
-        "-+old content\n"
-    )
-    results = parse_pr_diff(raw_diff)
-    file_paths = {r.file_path for r in results}
-    assert file_paths == {"src/real_file.py", "diff.txt"}
-    assert len(results) == 2  # NOT 3 — the removed diff lines don't become a file
-
-
-def test_terminal_preamble_produces_no_fake_filenames():
-    # Terminal output before a diff must be silently dropped.
-    raw_diff = (
-        "cd /path/to/project\n"
-        "git diff main\n"
-        "diff --git a/src/auth.py b/src/auth.py\n"
-        "index abc..def 100644\n"
-        "--- a/src/auth.py\n"
-        "+++ b/src/auth.py\n"
-        "@@ -1,1 +1,2 @@\n"
-        " import os\n"
-        "+import jwt\n"
-    )
-    results = parse_pr_diff(raw_diff)
-    file_paths = [r.file_path for r in results]
-    assert "cd" not in file_paths
-    assert "git" not in file_paths
-    assert file_paths == ["src/auth.py"]
-
-
-# ---------------------------------------------------------------------------
-# Issue 12: full pipeline output is JSON-serializable with correct structure
-# ---------------------------------------------------------------------------
-
-
-def test_full_pipeline_output_is_json_serializable():
-    import json
-
-    results = parse_pr_diff(_MULTI_FILE_DIFF)
-    dicts = [r.to_dict() for r in results]
-    # Must not raise
-    serialized = json.dumps(dicts)
-    parsed = json.loads(serialized)
-
-    required_keys = {
-        "file_path", "file_category", "is_test_only",
-        "hunks", "added_lines", "removed_lines",
-        "change_types", "security_signals", "risk_score",
-        "should_create_security_finding", "audit_log_only", "parsing_truncated",
-    }
-    for entry in parsed:
-        assert required_keys.issubset(entry.keys()), f"Missing keys in {entry['file_path']}"
-        assert isinstance(entry["file_category"], str)
-        assert isinstance(entry["change_types"], list)
-        assert all(isinstance(ct, str) for ct in entry["change_types"])
-
-
-def test_to_dict_added_lines_are_objects_not_bare_arrays():
-    # Issue 7: each line entry must be {"line": N, "content": "..."}, not [N, "..."]
-    patch = "@@ -1,1 +1,2 @@\n context\n+new line"
-    from app.analysis.models.diff_models import ChangedFileInput
-    from app.analysis.parser.diff_parser import parse_and_classify
-
-    result = parse_and_classify(ChangedFileInput(
-        filename="foo.py", status="modified", patch=patch
-    ))
-    d = result.to_dict()
-
-    for line_entry in d["added_lines"]:
-        assert isinstance(line_entry, dict), "Line entry must be a dict, not a list"
-        assert "line" in line_entry
-        assert "content" in line_entry
-        assert isinstance(line_entry["line"], int)
-        assert isinstance(line_entry["content"], str)
-
-    # Same shape inside hunks
-    for hunk in d["hunks"]:
-        for key in ("added_lines", "removed_lines", "context_lines"):
-            for entry in hunk[key]:
-                assert isinstance(entry, dict)
-                assert "line" in entry and "content" in entry

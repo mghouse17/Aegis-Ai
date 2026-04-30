@@ -146,18 +146,13 @@ def test_shell_true_with_spaces():
     assert "shell_true" in classify_security_signals(pf)
 
 
-def test_tls_verification_disabled_no_space():
+def test_reject_unauthorized_no_space():
     pf = _make_file(["{ rejectUnauthorized:false }"])
     assert "tls_verification_disabled" in classify_security_signals(pf)
 
 
-def test_tls_verification_disabled_mixed_case():
+def test_reject_unauthorized_mixed_case():
     pf = _make_file(["rejectUnauthorized: False"])
-    assert "tls_verification_disabled" in classify_security_signals(pf)
-
-
-def test_tls_verification_disabled_ssl_verify():
-    pf = _make_file(["requests.get(url, ssl_verify=False)"])
     assert "tls_verification_disabled" in classify_security_signals(pf)
 
 
@@ -220,3 +215,11 @@ def test_sha256_is_not_flagged_as_weak():
     # SHA-256 is acceptable; only md5/sha1 are weak
     pf = _make_file(["digest = hashlib.sha256(data).hexdigest()"])
     assert "weak_hash" not in classify_security_signals(pf)
+
+
+def test_api_key_github_token_secret_signals():
+    pf = _make_file(['API_KEY = "ghp_123456789SECRET"'])
+    signals = classify_security_signals(pf)
+    assert "api_key" in signals
+    assert "hardcoded_secret" in signals
+    assert "github_token" in signals

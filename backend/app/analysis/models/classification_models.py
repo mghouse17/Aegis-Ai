@@ -47,7 +47,9 @@ class FileClassification:
     added_lines: list[tuple[int, str]] = field(default_factory=list)
     removed_lines: list[tuple[int, str]] = field(default_factory=list)
     change_types: list[ChangeType] = field(default_factory=list)
+    change_confidence: dict[str, str] = field(default_factory=dict)
     security_signals: list[str] = field(default_factory=list)
+    dependency_changes: list[dict] = field(default_factory=list)
     risk_score: int = 0
     should_create_security_finding: bool = False
     audit_log_only: bool = False
@@ -74,7 +76,9 @@ class FileClassification:
             "added_lines": _lines_to_dicts(self.added_lines),
             "removed_lines": _lines_to_dicts(self.removed_lines),
             "change_types": [ct.value for ct in self.change_types],
+            "change_confidence": self.change_confidence,
             "security_signals": self.security_signals,
+            "dependency_changes": self.dependency_changes,
             "risk_score": self.risk_score,
             "should_create_security_finding": self.should_create_security_finding,
             "audit_log_only": self.audit_log_only,

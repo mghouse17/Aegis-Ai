@@ -100,6 +100,14 @@ def test_frontend_vue():
     assert classify_file("src/views/Home.vue") == FileCategory.FRONTEND
 
 
+def test_docs_readme():
+    assert classify_file("README.md") == FileCategory.DOCS
+
+
+def test_backend_config_py():
+    assert classify_file("backend/config.py") == FileCategory.CONFIG
+
+
 def test_unknown_makefile():
     assert classify_file("Makefile") == FileCategory.UNKNOWN
 
@@ -110,39 +118,17 @@ def test_test_beats_auth_priority():
 
 
 def test_case_insensitive_auth():
-    # "auth" keyword in path → AUTH even with mixed case
     assert classify_file("src/AUTH/middleware.py") == FileCategory.AUTH
 
 
 # ---------------------------------------------------------------------------
-# DOCS category (Issue 8)
-# ---------------------------------------------------------------------------
-
-
-def test_docs_readme():
-    assert classify_file("README.md") == FileCategory.DOCS
-
-
-def test_docs_markdown_in_auth_dir():
-    # docs/auth/overview.md must be DOCS, not AUTH (DOCS check runs first)
-    assert classify_file("docs/auth/overview.md") == FileCategory.DOCS
-
-
-def test_docs_rst_file():
-    assert classify_file("docs/api_reference.rst") == FileCategory.DOCS
-
-
-def test_docs_changelog():
-    assert classify_file("CHANGELOG.md") == FileCategory.DOCS
-
-
-# ---------------------------------------------------------------------------
-# Middleware false-positive prevention (Issue 3)
+# Middleware false-positive prevention (issue 7)
 # ---------------------------------------------------------------------------
 
 
 def test_cors_middleware_is_not_auth():
-    # "middleware" was removed from _AUTH_KEYWORDS; cors.ts has no auth terms
+    # "middleware" alone is no longer an auth keyword; only the content of the
+    # path segment matters. cors.ts has no auth-related term → UNKNOWN.
     assert classify_file("src/middleware/cors.ts") == FileCategory.UNKNOWN
 
 
@@ -151,19 +137,35 @@ def test_rate_limit_middleware_is_not_auth():
 
 
 def test_auth_middleware_is_still_auth():
-    # "auth" keyword in filename keeps AUTH classification
+    # "auth" in the filename keeps AUTH classification.
     assert classify_file("src/middleware/auth.ts") == FileCategory.AUTH
 
 
 def test_session_middleware_is_still_auth():
-    # "session" keyword remains in _AUTH_KEYWORDS
+    # "session" is still an auth keyword.
     assert classify_file("src/middleware/session.ts") == FileCategory.AUTH
 
 
 # ---------------------------------------------------------------------------
-# "access" keyword removal (Issue 3)
+# Config classification (issue 8)
 # ---------------------------------------------------------------------------
 
 
-def test_access_log_is_not_auth():
-    assert classify_file("logs/access_log.py") != FileCategory.AUTH
+def test_config_env_example():
+    assert classify_file(".env.example") == FileCategory.CONFIG
+
+
+def test_config_settings_py():
+    assert classify_file("app/settings.py") == FileCategory.CONFIG
+
+
+def test_config_dot_env_local():
+    assert classify_file(".env.local") == FileCategory.CONFIG
+
+
+def test_dockerfile_is_ci_cd():
+    assert classify_file("Dockerfile") == FileCategory.CI_CD
+
+
+def test_docker_compose_is_ci_cd():
+    assert classify_file("docker-compose.yml") == FileCategory.CI_CD

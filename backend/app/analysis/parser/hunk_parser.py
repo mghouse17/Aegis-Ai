@@ -34,13 +34,20 @@ def parse_hunk(hunk_text: str) -> Hunk:
 
     old_line = old_start
     new_line = new_start
+    old_seen = 0
+    new_seen = 0
 
     for raw in lines[1:]:
+        if old_seen >= old_count and new_seen >= new_count:
+            break
+
         if not raw:
             # blank context line
             hunk.context_lines.append((new_line, ""))
             old_line += 1
             new_line += 1
+            old_seen += 1
+            new_seen += 1
             continue
 
         prefix = raw[0]
@@ -49,13 +56,17 @@ def parse_hunk(hunk_text: str) -> Hunk:
         if prefix == "-":
             hunk.removed_lines.append((old_line, content))
             old_line += 1
+            old_seen += 1
         elif prefix == "+":
             hunk.added_lines.append((new_line, content))
             new_line += 1
+            new_seen += 1
         elif prefix == " ":
             hunk.context_lines.append((new_line, content))
             old_line += 1
             new_line += 1
+            old_seen += 1
+            new_seen += 1
         elif prefix == "\\":
             # "\ No newline at end of file" — skip, do not advance counters
             pass
@@ -64,5 +75,7 @@ def parse_hunk(hunk_text: str) -> Hunk:
             hunk.context_lines.append((new_line, raw))
             old_line += 1
             new_line += 1
+            old_seen += 1
+            new_seen += 1
 
     return hunk
