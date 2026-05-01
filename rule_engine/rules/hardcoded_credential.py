@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from core.context import AnalysisContext, ChangedFile
-from core.diff_utils import extract_added_lines, redact
+from core.diff_utils import extract_added_lines
 from core.finding import Finding, RuleMetadata, build_finding
 from core.rule import Rule
 
@@ -100,7 +100,7 @@ class HardcodedCredentialRule(Rule):
         confidence = CONFIDENCE_MAP.get(var_name, self._meta.confidence)
         evidence = {
             "credential_type": var_name,
-            "value": redact(value),
+            "value": "****",
             "source_line": line_num,
         }
         return build_finding(

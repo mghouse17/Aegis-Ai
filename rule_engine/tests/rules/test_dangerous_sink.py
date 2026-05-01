@@ -122,6 +122,45 @@ def test_fires_on_unassigned_source_same_line_as_sink():
     assert findings[0].confidence == 0.90  # same_line
 
 
+def test_deduplicates_multiple_sources_for_same_sink_line():
+    diff = make_added_diff([
+        "user_input = request.args.get('expr')",
+        "result = eval(user_input)",
+    ], start_line=3)
+    ctx = make_context(files=[{
+        "path": "app.py",
+        "language": "python",
+        "old_content": "",
+        "new_content": diff,
+        "diff": diff,
+    }])
+
+    findings = _rule().run(ctx)
+
+    assert len(findings) == 1
+    assert findings[0].evidence["sink"] == "eval("
+    assert findings[0].evidence["sink_line"] == 4
+    assert findings[0].evidence["source_line"] == 4
+    assert findings[0].evidence["window"] == 0
+    assert findings[0].confidence == 0.90
+
+
+def test_keeps_distinct_sink_lines_as_separate_findings():
+    ctx = _ctx([
+        "user_input = request.args.get('cmd')",
+        "eval(user_input)",
+        "exec(user_input)",
+    ])
+
+    findings = _rule().run(ctx)
+
+    assert len(findings) == 2
+    assert {(f.evidence["sink"], f.evidence["sink_line"]) for f in findings} == {
+        ("eval(", 2),
+        ("exec(", 3),
+    }
+
+
 # --- Malformed input ---
 
 def test_handles_empty_diff():

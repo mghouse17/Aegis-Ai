@@ -56,6 +56,13 @@ CONFIDENCE_MAP = {
     "raw_sql_fstring": 0.85,
 }
 
+CONFIDENCE_RANK = {
+    "same_line": 3,
+    "within_3": 2,
+    "raw_sql_fstring": 2,
+    "within_5": 1,
+}
+
 _PROXIMITY_WINDOW = 5
 
 
@@ -98,16 +105,18 @@ class DangerousSinkRule(Rule):
 
         sink_lines: list[tuple[int, str, str]] = []      # (line_num, content, sink_name)
         source_lines: list[tuple[int, str, str | None]] = []  # (line_num, content, var_name)
-        raw_sql_lines: list[tuple[int, str]] = []
+        raw_sql_lines: list[tuple[int, str, str]] = []
 
         for line_num, content in added:
-            if _RAW_SQL_FSTRING_RE.search(content) or _RAW_SQL_CONCAT_RE.search(content):
-                raw_sql_lines.append((line_num, content))
-
+            sink_name = ""
             for sink in _SINK_PATTERNS:
                 if sink in content:
                     sink_lines.append((line_num, content, sink))
+                    sink_name = sink
                     break
+
+            if _RAW_SQL_FSTRING_RE.search(content) or _RAW_SQL_CONCAT_RE.search(content):
+                raw_sql_lines.append((line_num, content, sink_name or "cursor/db.execute"))
 
             for source in _SOURCE_PATTERNS:
                 if source in content:
@@ -115,8 +124,11 @@ class DangerousSinkRule(Rule):
                     source_lines.append((line_num, content, var_name))
                     break
 
+        seen_sinks: set[tuple[str, int, str]] = set()
+
         # Report raw SQL findings (always dangerous regardless of source proximity)
-        for line_num, content in raw_sql_lines:
+        for line_num, content, sink_name in raw_sql_lines:
+            seen_sinks.add((file.path, line_num, sink_name))
             evidence = {
                 "sink": "cursor/db.execute",
                 "pattern": "raw_sql_injection",
@@ -126,7 +138,7 @@ class DangerousSinkRule(Rule):
             findings.append(self._make_finding(file.path, line_num, "raw_sql_fstring", evidence))
 
         # Proximity + variable bridge check for source→sink pairs
-        seen: set[tuple[int, int]] = set()
+        best_sink_findings: dict[tuple[str, int, str], tuple[int, Finding]] = {}
         for src_num, src_content, var_name in source_lines:
             for sink_num, sink_content, sink_name in sink_lines:
                 distance = abs(sink_num - src_num)
@@ -143,13 +155,12 @@ class DangerousSinkRule(Rule):
                     # No bridge and not same line — cannot establish taint path; skip
                     continue
 
-                key = (src_num, sink_num)
-                if key in seen:
+                key = (file.path, sink_num, sink_name)
+                if key in seen_sinks:
                     continue
-                seen.add(key)
 
                 # Avoid double-reporting lines already caught by raw SQL check
-                if any(sink_num == rln for rln, _ in raw_sql_lines):
+                if any(sink_num == rln for rln, _, _ in raw_sql_lines):
                     continue
 
                 evidence = {
@@ -159,7 +170,13 @@ class DangerousSinkRule(Rule):
                     "source_line": src_num,
                     "window": distance,
                 }
-                findings.append(self._make_finding(file.path, sink_num, confidence_key, evidence))
+                finding = self._make_finding(file.path, sink_num, confidence_key, evidence)
+                rank = CONFIDENCE_RANK[confidence_key]
+                previous = best_sink_findings.get(key)
+                if previous is None or rank > previous[0]:
+                    best_sink_findings[key] = (rank, finding)
+
+        findings.extend(finding for _, finding in best_sink_findings.values())
 
         return findings
 

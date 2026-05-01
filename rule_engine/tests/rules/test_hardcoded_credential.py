@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from conftest import make_added_diff, make_context, make_file
 from rules.hardcoded_credential import HardcodedCredentialRule
 
@@ -48,6 +50,33 @@ def test_fires_on_private_key_literal():
     findings = _rule().run(ctx)
     assert len(findings) == 1
     assert findings[0].confidence == 0.90
+
+
+@pytest.mark.parametrize(
+    ("credential_type", "secret"),
+    [
+        ("password", "supersecret123"),
+        ("api_key", "sk-prod-myRealApiKey9999"),
+        ("token", "bearer-abc123-realtoken-here"),
+        ("private_key", "rsa-private-key-value-here-12345"),
+    ],
+)
+def test_credential_value_is_fully_redacted(credential_type, secret):
+    diff = make_added_diff([f"{credential_type} = '{secret}'"])
+    ctx = make_context(files=[{
+        "path": "app.py",
+        "language": "python",
+        "old_content": "",
+        "new_content": diff,
+        "diff": diff,
+    }])
+
+    findings = _rule().run(ctx)
+
+    assert len(findings) == 1
+    assert findings[0].evidence["value"] == "****"
+    assert secret[:4] not in findings[0].evidence["value"]
+    assert secret[-4:] not in findings[0].evidence["value"]
 
 
 # --- Does not fire on safe equivalents ---
