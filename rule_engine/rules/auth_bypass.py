@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 
-from core._diff_utils import extract_added_lines, extract_removed_lines
-from core.context import AnalysisContext
-from core.finding import Finding, RuleMetadata
+from core.context import AnalysisContext, ChangedFile
+from core.diff_utils import extract_added_lines, extract_removed_lines
+from core.finding import Finding, RuleMetadata, build_finding
 from core.rule import Rule
 
-# Auth check patterns to look for in removed lines (active auth being deleted)
+# Auth check patterns to detect in removed lines (active auth checks deleted)
 _AUTH_PATTERNS = [
     "@requires_auth",
     "@login_required",
@@ -37,7 +36,7 @@ CONFIDENCE_MAP = {
 
 
 def _normalize(line: str) -> str:
-    """Normalize line for moved-check comparison: collapse whitespace, unify quotes."""
+    """Normalize a line for moved-check comparison: collapse whitespace, unify quotes."""
     normalized = re.sub(r"\s+", " ", line.strip())
     return normalized.replace('"', "'")
 
@@ -69,19 +68,25 @@ class AuthBypassRule(Rule):
             findings.extend(self._scan_file(file))
         return findings
 
-    def _scan_file(self, file) -> list[Finding]:
+    def _scan_file(self, file: ChangedFile) -> list[Finding]:
         findings: list[Finding] = []
+
+        # Pre-compute normalized new_content lines once per file (Issue 13 perf fix)
+        norm_new_lines = {_normalize(l) for l in file.new_content.splitlines()}
 
         # Pass 1: removed lines — active auth checks deleted
         for line_num, content in extract_removed_lines(file.diff):
             if any(pattern in content for pattern in _AUTH_PATTERNS):
-                if not self._exists_in_new_content(content, file.new_content):
+                norm_content = _normalize(content)
+                if norm_content and norm_content not in norm_new_lines:
                     evidence = {
                         "bypass_type": "deleted",
                         "removed_line": content.strip(),
                         "line_number": line_num,
                     }
-                    findings.append(self._make_finding(file.path, line_num, "deleted", evidence))
+                    findings.append(
+                        self._make_finding(file.path, line_num, "deleted", evidence)
+                    )
 
         # Pass 2: added lines — auth checks commented out
         for line_num, content in extract_added_lines(file.diff):
@@ -91,43 +96,21 @@ class AuthBypassRule(Rule):
                     "added_line": content.strip(),
                     "line_number": line_num,
                 }
-                findings.append(self._make_finding(file.path, line_num, "commented_out", evidence))
+                findings.append(
+                    self._make_finding(file.path, line_num, "commented_out", evidence)
+                )
 
         return findings
-
-    @staticmethod
-    def _exists_in_new_content(removed_line: str, new_content: str) -> bool:
-        """Return True if the auth check still exists in new_content (moved, not removed)."""
-        norm_removed = _normalize(removed_line)
-        if not norm_removed:
-            return False
-        for nc_line in new_content.splitlines():
-            if _normalize(nc_line) == norm_removed:
-                return True
-        return False
 
     def _make_finding(
         self, file_path: str, line_num: int, bypass_type: str, evidence: dict
     ) -> Finding:
-        confidence = CONFIDENCE_MAP.get(bypass_type, self._meta.confidence)
-        explanation = self._meta.explanation_template.format_map(
-            defaultdict(
-                str,
-                bypass_type=bypass_type,
-                file_path=file_path,
-                line_number=line_num,
-                evidence=str(evidence),
-            )
-        )
-        return Finding(
-            rule_id=self._meta.id,
-            rule_name=self._meta.name,
-            version=self._meta.version,
-            severity=self._meta.severity,
-            confidence=confidence,
+        return build_finding(
+            meta=self._meta,
+            confidence=CONFIDENCE_MAP.get(bypass_type, self._meta.confidence),
             file_path=file_path,
             line_number=line_num,
             title=f"Auth check {bypass_type} in {file_path}",
-            explanation=explanation,
             evidence=evidence,
+            template_vars={"bypass_type": bypass_type},
         )

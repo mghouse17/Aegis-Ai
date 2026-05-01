@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from conftest import make_added_diff, make_context, make_file
+from rules.exposed_secret import _is_entropy_skip, _shannon_entropy
 from rules.exposed_secret import ExposedSecretRule
 
 # A 40-char mixed-case string with Shannon entropy ≥ 4.5
@@ -124,6 +125,47 @@ def test_handles_none_diff():
     from core.context import AnalysisContext
     ctx = AnalysisContext(repo_path="/r", changed_files=[file])
     assert _rule().run(ctx) == []
+
+
+# --- Direct utility tests ---
+
+def test_shannon_entropy_empty_string():
+    assert _shannon_entropy("") == 0.0
+
+
+def test_shannon_entropy_single_char():
+    # One character = 100% frequency = 0 bits of entropy
+    assert _shannon_entropy("a") == 0.0
+
+
+def test_shannon_entropy_two_equal_chars():
+    # 50/50 distribution = exactly 1 bit
+    assert abs(_shannon_entropy("ab") - 1.0) < 0.001
+
+
+def test_shannon_entropy_high_value():
+    assert _shannon_entropy("TSHf6pWkLUyifDLkDmWJ6UuVTAIjvFu7WICPhDeO") >= 4.5
+
+
+def test_is_entropy_skip_url():
+    assert _is_entropy_skip("https://api.example.com/v1/auth")
+
+
+def test_is_entropy_skip_uuid():
+    assert _is_entropy_skip("550e8400-e29b-41d4-a716-446655440000")
+
+
+def test_is_entropy_skip_pure_hex():
+    assert _is_entropy_skip("a3f5e1b2c4d6e7f8a1b2c3d4e5f6a7b8")
+
+
+def test_is_entropy_skip_base64():
+    assert _is_entropy_skip("SGVsbG8gV29ybGQgdGhpcyBpcyBhIHRlc3Q=")
+
+
+def test_is_entropy_skip_normal_high_entropy_string():
+    # A genuinely random-looking secret should NOT be skipped
+    assert not _is_entropy_skip("TSHf6pWkLUyifDLkDmWJ6UuVTAIjvFu7WICPhDeO")
 
 
 # --- Isolation ---

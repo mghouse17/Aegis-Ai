@@ -103,6 +103,25 @@ def test_does_not_fire_on_safe_exec():
     assert findings == []
 
 
+def test_does_not_fire_on_unassigned_source_near_sink():
+    # Source appears without assignment — no variable bridge possible, different lines → no finding
+    ctx = _ctx([
+        "request.args.get('q')",  # source without assignment
+        "exec('safe_string')",    # sink on next line, no bridge
+    ])
+    findings = [f for f in _rule().run(ctx) if f.evidence.get("sink") == "exec("]
+    assert findings == []
+
+
+def test_fires_on_unassigned_source_same_line_as_sink():
+    # Source and sink on the same line — same-line rule fires regardless of variable bridge
+    ctx = _ctx(["exec(request.args.get('cmd'))"])
+    findings = _rule().run(ctx)
+    assert len(findings) == 1
+    assert findings[0].evidence["sink"] == "exec("
+    assert findings[0].confidence == 0.90  # same_line
+
+
 # --- Malformed input ---
 
 def test_handles_empty_diff():

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import math
 import re
-from collections import defaultdict
 
-from core._diff_utils import extract_added_lines
-from core.context import AnalysisContext
-from core.finding import Finding, RuleMetadata
+from core.context import AnalysisContext, ChangedFile
+from core.diff_utils import extract_added_lines, redact
+from core.finding import Finding, RuleMetadata, build_finding
 from core.rule import Rule
 
 # --- Compiled patterns ---
@@ -37,12 +36,6 @@ CONFIDENCE_MAP = {
     "github_token": 0.95,
     "entropy": 0.75,
 }
-
-
-def _redact(value: str) -> str:
-    if len(value) <= 8:
-        return "****"
-    return value[:4] + "*" * (len(value) - 8) + value[-4:]
 
 
 def _shannon_entropy(s: str) -> float:
@@ -98,7 +91,7 @@ class ExposedSecretRule(Rule):
             findings.extend(self._scan_file(file))
         return findings
 
-    def _scan_file(self, file) -> list[Finding]:
+    def _scan_file(self, file: ChangedFile) -> list[Finding]:
         findings: list[Finding] = []
         for line_num, content in extract_added_lines(file.diff):
             finding = self._check_line(file.path, line_num, content)
@@ -113,7 +106,7 @@ class ExposedSecretRule(Rule):
             matched = m.group(0)
             evidence = {
                 "matched_pattern": "AWS_ACCESS_KEY",
-                "value": _redact(matched),
+                "value": redact(matched),
                 "source_line": line_num,
             }
             return self._make_finding(file_path, line_num, "aws_key", evidence)
@@ -124,7 +117,7 @@ class ExposedSecretRule(Rule):
             matched = m.group(0)
             evidence = {
                 "matched_pattern": "GITHUB_TOKEN",
-                "value": _redact(matched),
+                "value": redact(matched),
                 "source_line": line_num,
             }
             return self._make_finding(file_path, line_num, "github_token", evidence)
@@ -140,7 +133,7 @@ class ExposedSecretRule(Rule):
                     evidence = {
                         "matched_pattern": "HIGH_ENTROPY_ASSIGNMENT",
                         "variable": var_name,
-                        "value": _redact(value),
+                        "value": redact(value),
                         "entropy": round(entropy, 2),
                         "source_line": line_num,
                     }
@@ -157,24 +150,12 @@ class ExposedSecretRule(Rule):
     ) -> Finding:
         confidence = CONFIDENCE_MAP.get(pattern_key, self._meta.confidence)
         secret_type = evidence.get("matched_pattern", pattern_key).replace("_", " ").title()
-        explanation = self._meta.explanation_template.format_map(
-            defaultdict(
-                str,
-                secret_type=secret_type,
-                file_path=file_path,
-                line_number=line_num,
-                evidence=str(evidence),
-            )
-        )
-        return Finding(
-            rule_id=self._meta.id,
-            rule_name=self._meta.name,
-            version=self._meta.version,
-            severity=self._meta.severity,
+        return build_finding(
+            meta=self._meta,
             confidence=confidence,
             file_path=file_path,
             line_number=line_num,
             title=f"Exposed {secret_type} in {file_path}",
-            explanation=explanation,
             evidence=evidence,
+            template_vars={"secret_type": secret_type},
         )

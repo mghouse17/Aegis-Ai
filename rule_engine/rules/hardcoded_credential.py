@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 
-from core._diff_utils import extract_added_lines
-from core.context import AnalysisContext
-from core.finding import Finding, RuleMetadata
+from core.context import AnalysisContext, ChangedFile
+from core.diff_utils import extract_added_lines, redact
+from core.finding import Finding, RuleMetadata, build_finding
 from core.rule import Rule
 
 # --- Compiled patterns ---
@@ -38,12 +37,6 @@ CONFIDENCE_MAP = {
     "token": 0.80,
     "private_key": 0.90,
 }
-
-
-def _redact(value: str) -> str:
-    if len(value) <= 8:
-        return "****"
-    return value[:4] + "*" * (len(value) - 8) + value[-4:]
 
 
 def _is_placeholder(value: str) -> bool:
@@ -82,7 +75,7 @@ class HardcodedCredentialRule(Rule):
             findings.extend(self._scan_file(file))
         return findings
 
-    def _scan_file(self, file) -> list[Finding]:
+    def _scan_file(self, file: ChangedFile) -> list[Finding]:
         findings: list[Finding] = []
         for line_num, content in extract_added_lines(file.diff):
             finding = self._check_line(file.path, line_num, content)
@@ -91,7 +84,6 @@ class HardcodedCredentialRule(Rule):
         return findings
 
     def _check_line(self, file_path: str, line_num: int, content: str) -> Finding | None:
-        # Skip lines that reference env vars or config lookups
         if any(skip in content for skip in _SKIP_SOURCES):
             return None
 
@@ -108,27 +100,15 @@ class HardcodedCredentialRule(Rule):
         confidence = CONFIDENCE_MAP.get(var_name, self._meta.confidence)
         evidence = {
             "credential_type": var_name,
-            "value": "****",
+            "value": redact(value),
             "source_line": line_num,
         }
-        explanation = self._meta.explanation_template.format_map(
-            defaultdict(
-                str,
-                credential_type=var_name,
-                file_path=file_path,
-                line_number=line_num,
-                evidence=str(evidence),
-            )
-        )
-        return Finding(
-            rule_id=self._meta.id,
-            rule_name=self._meta.name,
-            version=self._meta.version,
-            severity=self._meta.severity,
+        return build_finding(
+            meta=self._meta,
             confidence=confidence,
             file_path=file_path,
             line_number=line_num,
             title=f"Hardcoded {var_name} in {file_path}",
-            explanation=explanation,
             evidence=evidence,
+            template_vars={"credential_type": var_name},
         )

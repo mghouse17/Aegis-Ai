@@ -28,17 +28,17 @@ def make_mixed_diff(removed: list[str], added: list[str], start_line: int = 1) -
 
 def make_file(
     path: str = "app.py",
-    language: str = "python",
+    language: str = "",
     diff: str = "",
     old_content: str = "",
     new_content: str = "",
 ) -> ChangedFile:
     return ChangedFile(
         path=path,
-        language=language,
         old_content=old_content,
         new_content=new_content or diff,
         diff=diff,
+        language=language,
     )
 
 
@@ -58,7 +58,7 @@ def make_context(
 def make_dep(
     package: str,
     new_version: str,
-    old_version: str = "",
+    old_version: str | None = None,
     ecosystem: str = "pip",
     is_direct: bool = True,
 ) -> dict:

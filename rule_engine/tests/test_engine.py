@@ -83,8 +83,10 @@ class _BadOutputRule(Rule):
 
 def test_loads_rules_from_config():
     rules = load_rules(_CONFIG_PATH)
-    assert len(rules) == 5
     assert all(isinstance(r, Rule) for r in rules)
+    assert {r.metadata.id for r in rules} == {
+        "SEC-001", "SEC-002", "SEC-003", "SEC-004", "SEC-005"
+    }
 
 
 def test_skips_disabled_rules():
@@ -152,3 +154,34 @@ def test_rejects_non_finding_rule_output():
     # None/"bad string"/42 all rejected; no findings, no errors
     assert result.findings == []
     assert result.errors == []
+
+
+def test_rule_default_metadata_matches_yaml():
+    """Drift guard: DEFAULT_METADATA on each rule class must match YAML config values."""
+    from rules.auth_bypass import AuthBypassRule
+    from rules.dangerous_sink import DangerousSinkRule
+    from rules.exposed_secret import ExposedSecretRule
+    from rules.hardcoded_credential import HardcodedCredentialRule
+    from rules.new_cve_dependency import NewCveDependencyRule
+
+    rule_classes = [
+        ExposedSecretRule,
+        HardcodedCredentialRule,
+        NewCveDependencyRule,
+        AuthBypassRule,
+        DangerousSinkRule,
+    ]
+    loaded_by_id = {r.metadata.id: r.metadata for r in load_rules(_CONFIG_PATH)}
+
+    for cls in rule_classes:
+        default = cls.DEFAULT_METADATA
+        yaml_meta = loaded_by_id.get(default.id)
+        assert yaml_meta is not None, f"{default.id} not found in rules.yaml"
+        assert yaml_meta.severity == default.severity, (
+            f"{default.id}: severity in YAML ({yaml_meta.severity!r}) "
+            f"differs from DEFAULT_METADATA ({default.severity!r})"
+        )
+        assert yaml_meta.confidence == default.confidence, (
+            f"{default.id}: confidence in YAML ({yaml_meta.confidence}) "
+            f"differs from DEFAULT_METADATA ({default.confidence})"
+        )

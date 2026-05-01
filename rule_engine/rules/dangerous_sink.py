@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 
-from core._diff_utils import extract_added_lines
-from core.context import AnalysisContext
-from core.finding import Finding, RuleMetadata
+from core.context import AnalysisContext, ChangedFile
+from core.diff_utils import extract_added_lines
+from core.finding import Finding, RuleMetadata, build_finding
 from core.rule import Rule
 
-# Dangerous sinks — execution or data sinks that are risky with user input
+# Dangerous sinks — execution or SQL sinks that are risky with user input
 _SINK_PATTERNS = [
     "exec(",
     "eval(",
@@ -34,7 +33,7 @@ _SOURCE_PATTERNS = [
     "sys.argv",
 ]
 
-# Raw SQL with f-string or string concatenation — always dangerous
+# Raw SQL with f-string or string concatenation — always dangerous regardless of proximity
 _RAW_SQL_FSTRING_RE = re.compile(
     r"(cursor|db)\.execute\s*\(\s*f[\"']",
     re.IGNORECASE,
@@ -45,6 +44,7 @@ _RAW_SQL_CONCAT_RE = re.compile(
 )
 
 # Variable assignment from a user input source
+# Covers: x = request.args.get("q"), x = request.json["field"], x = request.form.get("name")
 _SOURCE_ASSIGN_RE = re.compile(
     r"\s*(\w+)\s*=\s*(?:request\.[\w\.]+|query_params|user_input|sys\.argv)",
 )
@@ -60,7 +60,7 @@ _PROXIMITY_WINDOW = 5
 
 
 def _extract_var_name(line: str) -> str | None:
-    """Extract variable name from a user-input source assignment line."""
+    """Extract the variable name from a user-input source assignment, or None if not an assignment."""
     m = _SOURCE_ASSIGN_RE.match(line)
     return m.group(1) if m else None
 
@@ -92,34 +92,30 @@ class DangerousSinkRule(Rule):
             findings.extend(self._scan_file(file))
         return findings
 
-    def _scan_file(self, file) -> list[Finding]:  # noqa: C901
+    def _scan_file(self, file: ChangedFile) -> list[Finding]:  # noqa: C901
         findings: list[Finding] = []
         added = extract_added_lines(file.diff)
 
-        # Collect sink and source positions
-        sink_lines: list[tuple[int, str, str]] = []   # (line_num, content, sink_name)
+        sink_lines: list[tuple[int, str, str]] = []      # (line_num, content, sink_name)
         source_lines: list[tuple[int, str, str | None]] = []  # (line_num, content, var_name)
         raw_sql_lines: list[tuple[int, str]] = []
 
         for line_num, content in added:
-            # Check for raw SQL patterns first (always report)
             if _RAW_SQL_FSTRING_RE.search(content) or _RAW_SQL_CONCAT_RE.search(content):
                 raw_sql_lines.append((line_num, content))
 
-            # Collect sinks
             for sink in _SINK_PATTERNS:
                 if sink in content:
                     sink_lines.append((line_num, content, sink))
                     break
 
-            # Collect sources
             for source in _SOURCE_PATTERNS:
                 if source in content:
                     var_name = _extract_var_name(content)
                     source_lines.append((line_num, content, var_name))
                     break
 
-        # Report raw SQL findings
+        # Report raw SQL findings (always dangerous regardless of source proximity)
         for line_num, content in raw_sql_lines:
             evidence = {
                 "sink": "cursor/db.execute",
@@ -127,11 +123,9 @@ class DangerousSinkRule(Rule):
                 "sink_line": line_num,
                 "content": content.strip()[:120],
             }
-            findings.append(
-                self._make_finding(file.path, line_num, "raw_sql_fstring", evidence)
-            )
+            findings.append(self._make_finding(file.path, line_num, "raw_sql_fstring", evidence))
 
-        # Check proximity + variable bridge for source→sink
+        # Proximity + variable bridge check for source→sink pairs
         seen: set[tuple[int, int]] = set()
         for src_num, src_content, var_name in source_lines:
             for sink_num, sink_content, sink_name in sink_lines:
@@ -139,10 +133,14 @@ class DangerousSinkRule(Rule):
                 if distance > _PROXIMITY_WINDOW:
                     continue
 
-                # Require variable bridge OR same line
-                if distance > 0 and var_name and var_name not in sink_content:
-                    continue
-                if distance > 0 and not var_name and src_num not in sink_content:
+                if distance == 0:
+                    # Same line: source and sink co-occur — always fire
+                    confidence_key = "same_line"
+                elif var_name and var_name in sink_content:
+                    # Variable bridge: the assigned name appears in the sink call
+                    confidence_key = "within_3" if distance <= 3 else "within_5"
+                else:
+                    # No bridge and not same line — cannot establish taint path; skip
                     continue
 
                 key = (src_num, sink_num)
@@ -150,14 +148,7 @@ class DangerousSinkRule(Rule):
                     continue
                 seen.add(key)
 
-                if distance == 0:
-                    confidence_key = "same_line"
-                elif distance <= 3:
-                    confidence_key = "within_3"
-                else:
-                    confidence_key = "within_5"
-
-                # Avoid double-reporting if also caught by raw_sql
+                # Avoid double-reporting lines already caught by raw SQL check
                 if any(sink_num == rln for rln, _ in raw_sql_lines):
                     continue
 
@@ -168,35 +159,20 @@ class DangerousSinkRule(Rule):
                     "source_line": src_num,
                     "window": distance,
                 }
-                findings.append(
-                    self._make_finding(file.path, sink_num, confidence_key, evidence)
-                )
+                findings.append(self._make_finding(file.path, sink_num, confidence_key, evidence))
 
         return findings
 
     def _make_finding(
         self, file_path: str, line_num: int, confidence_key: str, evidence: dict
     ) -> Finding:
-        confidence = CONFIDENCE_MAP.get(confidence_key, self._meta.confidence)
         sink = evidence.get("sink", "dangerous sink")
-        explanation = self._meta.explanation_template.format_map(
-            defaultdict(
-                str,
-                sink=sink,
-                file_path=file_path,
-                line_number=line_num,
-                evidence=str(evidence),
-            )
-        )
-        return Finding(
-            rule_id=self._meta.id,
-            rule_name=self._meta.name,
-            version=self._meta.version,
-            severity=self._meta.severity,
-            confidence=confidence,
+        return build_finding(
+            meta=self._meta,
+            confidence=CONFIDENCE_MAP.get(confidence_key, self._meta.confidence),
             file_path=file_path,
             line_number=line_num,
             title=f"User input reaches {sink} in {file_path}",
-            explanation=explanation,
             evidence=evidence,
+            template_vars={"sink": sink},
         )

@@ -16,7 +16,7 @@ def _rule() -> NewCveDependencyRule:
 
 def test_fires_on_new_vulnerable_direct_dep():
     ctx = make_context(
-        deps=[make_dep("requests", "2.19.0", old_version="", ecosystem="pip", is_direct=True)],
+        deps=[make_dep("requests", "2.19.0", old_version=None, ecosystem="pip", is_direct=True)],
         imports={"requirements.txt": ["requests"]},
     )
     findings = _rule().run(ctx)
@@ -39,7 +39,7 @@ def test_fires_on_version_change_to_vulnerable():
 
 def test_fires_on_npm_lodash():
     ctx = make_context(
-        deps=[make_dep("lodash", "4.17.15", old_version="", ecosystem="npm", is_direct=True)],
+        deps=[make_dep("lodash", "4.17.15", old_version=None, ecosystem="npm", is_direct=True)],
         imports={"index.js": ["lodash", "_"]},
     )
     findings = _rule().run(ctx)
@@ -50,7 +50,7 @@ def test_fires_on_npm_lodash():
 def test_fires_on_pyyaml_via_yaml_import():
     # pyyaml is imported as 'yaml' in Python — alias mapping must resolve this
     ctx = make_context(
-        deps=[make_dep("pyyaml", "5.3.1", old_version="", ecosystem="pip", is_direct=True)],
+        deps=[make_dep("pyyaml", "5.3.1", old_version=None, ecosystem="pip", is_direct=True)],
         imports={"app.py": ["yaml"]},
     )
     findings = _rule().run(ctx)
@@ -62,7 +62,7 @@ def test_fires_on_pyyaml_via_yaml_import():
 
 def test_does_not_fire_on_transitive_dep():
     ctx = make_context(
-        deps=[make_dep("requests", "2.19.0", old_version="", ecosystem="pip", is_direct=False)],
+        deps=[make_dep("requests", "2.19.0", old_version=None, ecosystem="pip", is_direct=False)],
         imports={"app.py": ["requests"]},
     )
     assert _rule().run(ctx) == []
@@ -71,7 +71,7 @@ def test_does_not_fire_on_transitive_dep():
 def test_does_not_fire_if_not_imported():
     # Package is in deps but not imported in any changed file
     ctx = make_context(
-        deps=[make_dep("requests", "2.19.0", old_version="", ecosystem="pip", is_direct=True)],
+        deps=[make_dep("requests", "2.19.0", old_version=None, ecosystem="pip", is_direct=True)],
         imports={},
     )
     assert _rule().run(ctx) == []
@@ -79,7 +79,7 @@ def test_does_not_fire_if_not_imported():
 
 def test_does_not_fire_on_unaffected_version():
     ctx = make_context(
-        deps=[make_dep("requests", "2.28.0", old_version="", ecosystem="pip", is_direct=True)],
+        deps=[make_dep("requests", "2.28.0", old_version=None, ecosystem="pip", is_direct=True)],
         imports={"app.py": ["requests"]},
     )
     assert _rule().run(ctx) == []
@@ -97,7 +97,7 @@ def test_does_not_fire_on_same_version_unchanged():
 def test_does_not_cross_ecosystem():
     # A "requests" package in npm is different from pip
     ctx = make_context(
-        deps=[make_dep("requests", "2.19.0", old_version="", ecosystem="npm", is_direct=True)],
+        deps=[make_dep("requests", "2.19.0", old_version=None, ecosystem="npm", is_direct=True)],
         imports={"app.js": ["requests"]},
     )
     assert _rule().run(ctx) == []
@@ -107,7 +107,7 @@ def test_does_not_cross_ecosystem():
 
 def test_finding_has_none_line_number():
     ctx = make_context(
-        deps=[make_dep("requests", "2.19.0", old_version="", ecosystem="pip", is_direct=True)],
+        deps=[make_dep("requests", "2.19.0", old_version=None, ecosystem="pip", is_direct=True)],
         imports={"app.py": ["requests"]},
     )
     findings = _rule().run(ctx)
@@ -117,7 +117,7 @@ def test_finding_has_none_line_number():
 
 def test_finding_file_path_is_dependencies():
     ctx = make_context(
-        deps=[make_dep("requests", "2.19.0", old_version="", ecosystem="pip", is_direct=True)],
+        deps=[make_dep("requests", "2.19.0", old_version=None, ecosystem="pip", is_direct=True)],
         imports={"app.py": ["requests"]},
     )
     findings = _rule().run(ctx)
@@ -138,7 +138,7 @@ def test_runs_in_isolation():
     assert rule.metadata.id == "SEC-003"
     assert rule.metadata.severity == "high"
     ctx = make_context(
-        deps=[make_dep("pyyaml", "5.3.1", old_version="", ecosystem="pip", is_direct=True)],
+        deps=[make_dep("pyyaml", "5.3.1", old_version=None, ecosystem="pip", is_direct=True)],
         imports={"utils.py": ["yaml"]},
     )
     findings = rule.run(ctx)

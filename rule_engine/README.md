@@ -45,6 +45,20 @@ EngineResult(findings, errors)
 
 ---
 
+## Deployment Note
+
+The `NewCveDependencyRule` (SEC-003) loads the CVE database from disk once at instantiation time. The engine is designed to be **instantiated once and reused across many runs**, not re-created per request. In a web service or daemon, construct the `RuleEngine` at startup and call `.run(context)` for each PR — this keeps the disk-read and `importlib` overhead to a one-time cost.
+
+```python
+# At startup
+engine = RuleEngine(load_rules(Path("config/rules.yaml")))
+
+# Per PR
+result = engine.run(context)
+```
+
+---
+
 ## How to Run Tests
 
 ```bash

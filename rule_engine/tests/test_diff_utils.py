@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core._diff_utils import extract_added_lines, extract_removed_lines
+from core.diff_utils import extract_added_lines, extract_removed_lines
 
 
 def test_extract_added_lines_basic():

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 
 import yaml
 
 from core.context import AnalysisContext
-from core.finding import Finding, RuleMetadata
+from core.finding import Finding, RuleMetadata, build_finding
 from core.rule import Rule
 
 _DEFAULT_CVE_DB = Path(__file__).parent.parent / "config" / "cve_db.yaml"
 
-# Maps PyPI package name → set of import names used in Python code
+# Maps PyPI/npm package name → set of import names used in source code
 _IMPORT_ALIASES: dict[str, set[str]] = {
     "requests": {"requests"},
     "pyyaml": {"yaml"},
@@ -22,6 +21,7 @@ _IMPORT_ALIASES: dict[str, set[str]] = {
 
 CONFIDENCE_MAP = {
     "exact_version": 0.80,
+    # TODO(v1.1): add "semver_range" key once range matching is implemented
 }
 
 
@@ -50,7 +50,7 @@ class NewCveDependencyRule(Rule):
 
     @staticmethod
     def _load_cve_db(path: Path) -> dict[tuple[str, str, str], dict]:
-        """Build lookup: (package_lower, version, ecosystem_lower) -> {cve_id, description}"""
+        """Build lookup: (package_lower, version, ecosystem_lower) -> {cve_id, description}."""
         index: dict[tuple[str, str, str], dict] = {}
         if not path.exists():
             return index
@@ -71,16 +71,13 @@ class NewCveDependencyRule(Rule):
 
     def run(self, context: AnalysisContext) -> list[Finding]:
         findings: list[Finding] = []
-
-        all_imports: set[str] = set()
-        for imports in context.imports_by_file.values():
-            all_imports.update(imports)
+        all_imports = context.all_imports
 
         for dep in context.dependency_changes:
             if not dep.is_direct:
                 continue
-            # Only newly added or version-changed dependencies
-            if dep.old_version == dep.new_version and dep.old_version != "":
+            # Skip unchanged dependencies: old version present and equal to new version
+            if dep.old_version is not None and dep.old_version == dep.new_version:
                 continue
 
             key = (dep.package_name.lower(), dep.new_version, dep.ecosystem.lower())
@@ -88,7 +85,6 @@ class NewCveDependencyRule(Rule):
             if not cve_info:
                 continue
 
-            # Check if the package is actually imported in changed files
             if not self._is_imported(dep.package_name, all_imports):
                 continue
 
@@ -99,34 +95,27 @@ class NewCveDependencyRule(Rule):
                 "cve_id": cve_info["cve_id"],
                 "description": cve_info["description"],
             }
-            explanation = self._meta.explanation_template.format_map(
-                defaultdict(
-                    str,
-                    package=dep.package_name,
-                    version=dep.new_version,
-                    cve_id=cve_info["cve_id"],
-                    description=cve_info["description"],
-                )
-            )
             findings.append(
-                Finding(
-                    rule_id=self._meta.id,
-                    rule_name=self._meta.name,
-                    version=self._meta.version,
-                    severity=self._meta.severity,
+                build_finding(
+                    meta=self._meta,
                     confidence=CONFIDENCE_MAP["exact_version"],
                     file_path="dependencies",
                     line_number=None,
                     title=f"Vulnerable dependency: {dep.package_name} {dep.new_version} ({cve_info['cve_id']})",
-                    explanation=explanation,
                     evidence=evidence,
+                    template_vars={
+                        "package": dep.package_name,
+                        "version": dep.new_version,
+                        "cve_id": cve_info["cve_id"],
+                        "description": cve_info["description"],
+                    },
                 )
             )
 
         return findings
 
     @staticmethod
-    def _is_imported(package_name: str, all_imports: set[str]) -> bool:
+    def _is_imported(package_name: str, all_imports: frozenset[str]) -> bool:
         pkg_lower = package_name.lower()
         import_names = _IMPORT_ALIASES.get(pkg_lower, {pkg_lower})
         return bool(import_names & all_imports)

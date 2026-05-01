@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from conftest import make_added_diff, make_context, make_file, make_removed_diff, make_mixed_diff
-from rules.auth_bypass import AuthBypassRule
+from rules.auth_bypass import AuthBypassRule, _normalize
 
 
 def _rule() -> AuthBypassRule:
@@ -127,6 +127,28 @@ def test_handles_empty_diff():
 
 def test_handles_empty_context():
     assert _rule().run(make_context()) == []
+
+
+# --- Direct utility tests for _normalize ---
+
+def test_normalize_strips_leading_trailing_whitespace():
+    assert _normalize("  @requires_auth  ") == "@requires_auth"
+
+
+def test_normalize_collapses_internal_spaces():
+    assert _normalize("require_role(  'admin'  )") == "require_role( 'admin' )"
+
+
+def test_normalize_unifies_double_quotes_to_single():
+    assert _normalize('require_role("admin")') == "require_role('admin')"
+
+
+def test_normalize_empty_string():
+    assert _normalize("") == ""
+
+
+def test_normalize_whitespace_only():
+    assert _normalize("   ") == ""
 
 
 # --- Isolation ---

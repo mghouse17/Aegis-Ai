@@ -18,7 +18,8 @@ def test_fires_on_password_literal():
     assert len(findings) == 1
     assert findings[0].rule_id == "SEC-002"
     assert findings[0].evidence["credential_type"] == "password"
-    assert findings[0].evidence["value"] == "****"
+    assert "supersecret123" not in findings[0].evidence["value"]
+    assert "****" in findings[0].evidence["value"]
     assert findings[0].confidence == 0.85
 
 

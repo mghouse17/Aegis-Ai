@@ -53,3 +53,10 @@ def extract_removed_lines(diff: str) -> list[tuple[int, str]]:
         else:
             old_line += 1  # context line
     return result
+
+
+def redact(value: str) -> str:
+    """Mask all but the first and last 4 characters of a sensitive value."""
+    if len(value) <= 8:
+        return "****"
+    return value[:4] + "*" * (len(value) - 8) + value[-4:]
