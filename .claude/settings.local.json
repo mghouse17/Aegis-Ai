@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -m pytest app/tests/ -v --tb=short)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(/c/Users/Mghou/AppData/Local/Programs/Python/Python313/python.exe -m pytest app/tests/ -v --tb=short)",
+      "Bash(/c/Users/Mghou/AppData/Local/Programs/Python/Python313/python.exe -m pytest app/analysis/tests/ --tb=short -q)",
+      "Bash(/c/Users/Mghou/AppData/Local/Programs/Python/Python313/python.exe -m pytest app/tests/test_client.py -v --tb=short)",
+      "Bash(/c/Users/Mghou/AppData/Local/Programs/Python/Python313/python.exe -m pytest -q)"
+    ]
+  }
+}
