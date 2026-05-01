@@ -1,0 +1,40 @@
+vulnerabilities:
+  - package: requests
+    ecosystem: pip
+    versions:
+      - "2.19.0"
+      - "2.18.0"
+    cve_id: CVE-2023-32681
+    description: "Proxy-Authorization header leaked to redirect destinations"
+
+  - package: lodash
+    ecosystem: npm
+    versions:
+      - "4.17.15"
+      - "4.17.14"
+    cve_id: CVE-2021-23337
+    description: "Prototype pollution via chain functions allowing arbitrary code execution"
+
+  - package: pyyaml
+    ecosystem: pip
+    versions:
+      - "5.3.1"
+      - "5.3.0"
+    cve_id: CVE-2020-1747
+    description: "Arbitrary code execution via unsafe yaml.load with user-supplied input"
+
+  - package: django
+    ecosystem: pip
+    versions:
+      - "2.2.0"
+      - "2.1.0"
+    cve_id: CVE-2021-33203
+    description: "Directory traversal via crafted URL path in django.contrib.admindocs"
+
+  - package: pillow
+    ecosystem: pip
+    versions:
+      - "8.1.0"
+      - "8.0.0"
+    cve_id: CVE-2021-27921
+    description: "Decompression bomb denial of service via crafted BLP image"

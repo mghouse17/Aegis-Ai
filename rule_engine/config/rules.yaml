@@ -1,0 +1,62 @@
+rules:
+  - id: SEC-001
+    name: Exposed Secret
+    version: "1.0.0"
+    severity: critical
+    confidence: 0.9
+    explanation_template: >
+      A {secret_type} was detected in {file_path} at line {line_number}.
+      This credential may be committed to source control and exposed publicly.
+      Evidence: {evidence}
+    enabled: true
+    module: rules.exposed_secret
+    class: ExposedSecretRule
+
+  - id: SEC-002
+    name: Hardcoded Credential
+    version: "1.0.0"
+    severity: high
+    confidence: 0.85
+    explanation_template: >
+      A hardcoded {credential_type} literal was found in {file_path} at line {line_number}.
+      Use environment variables or a secrets manager instead.
+      Evidence: {evidence}
+    enabled: true
+    module: rules.hardcoded_credential
+    class: HardcodedCredentialRule
+
+  - id: SEC-003
+    name: New CVE Dependency
+    version: "1.0.0"
+    severity: high
+    confidence: 0.8
+    explanation_template: >
+      A newly added dependency {package} {version} has a known vulnerability ({cve_id}).
+      {description}
+    enabled: true
+    module: rules.new_cve_dependency
+    class: NewCveDependencyRule
+
+  - id: SEC-004
+    name: Auth Bypass
+    version: "1.0.0"
+    severity: critical
+    confidence: 0.9
+    explanation_template: >
+      An authentication or authorization check was {bypass_type} in {file_path} at line {line_number}.
+      Evidence: {evidence}
+    enabled: true
+    module: rules.auth_bypass
+    class: AuthBypassRule
+
+  - id: SEC-005
+    name: Dangerous Sink Reachability
+    version: "1.0.0"
+    severity: high
+    confidence: 0.85
+    explanation_template: >
+      User-controlled input appears to reach a dangerous sink ({sink}) in {file_path} at line {line_number}.
+      Evidence: {evidence}
+    enabled: true
+    module: rules.dangerous_sink
+    class: DangerousSinkRule
